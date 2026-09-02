@@ -1,9 +1,9 @@
-import { Body, Controller, Get, Inject, Param, Patch, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Inject, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { z } from "zod";
 import { createPublicId, Permission } from "@zcg/shared";
 import { PrismaService } from "../prisma.service.js";
 import { AuthGuard, CurrentUser, assertPerm, type AuthPrincipal } from "../auth/auth.guard.js";
-import { campaignScope, redactList, redactRecord } from "../auth/tenant.js";
+import { buyerScope, campaignScope, publisherScope, redactList, redactRecord } from "../auth/tenant.js";
 
 @Controller("campaigns")
 @UseGuards(AuthGuard)
@@ -11,9 +11,12 @@ export class CampaignsController {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   @Get()
-  async list(@CurrentUser() user: AuthPrincipal) {
+  async list(@CurrentUser() user: AuthPrincipal, @Query("includeArchived") includeArchived?: string) {
     const data = await this.prisma.campaign.findMany({
-      where: campaignScope(user),
+      where: {
+        ...campaignScope(user),
+        status: includeArchived === "true" ? undefined : { not: "ARCHIVED" },
+      },
       orderBy: { name: "asc" },
       include: {
         vertical: true,
@@ -37,40 +40,53 @@ export class CampaignsController {
         routingStrategy: z.string().optional(),
         buyerRevenueAmount: z.string().optional(),
         publisherPayoutAmount: z.string().optional(),
-        buyerThresholdSeconds: z.number().optional(),
-        publisherThresholdSeconds: z.number().optional(),
+        buyerThresholdSeconds: z.coerce.number().optional(),
+        publisherThresholdSeconds: z.coerce.number().optional(),
         allowedStates: z.array(z.string()).optional(),
         buyerIds: z.array(z.string()).optional(),
         dialMode: z.enum(["WATERFALL", "SIMULTANEOUS"]).optional(),
         recordingEnabled: z.boolean().optional(),
         recordingDisclosure: z.string().optional(),
-        dailyCap: z.number().optional(),
+        dailyCap: z.coerce.number().optional(),
+        status: z.enum(["DRAFT", "TESTING", "ACTIVE", "PAUSED"]).optional(),
       })
       .parse(body);
+    const publisher = await this.prisma.publisher.findFirstOrThrow({
+      where: { ...publisherScope(user), OR: [{ id: dto.publisherId }, { publicId: dto.publisherId }] },
+    });
+    const vertical = await this.prisma.vertical.findFirstOrThrow({
+      where: {
+        organizationId: user.organizationId,
+        OR: [{ id: dto.verticalId }, { slug: dto.verticalId }],
+      },
+    });
     const cam = await this.prisma.campaign.create({
       data: {
         publicId: createPublicId("cam"),
         organizationId: user.organizationId,
         name: dto.name,
-        verticalId: dto.verticalId,
-        publisherId: dto.publisherId,
+        verticalId: vertical.id,
+        publisherId: publisher.id,
         routingStrategy: (dto.routingStrategy as never) ?? "HIGHEST_REVENUE",
         buyerRevenueAmount: dto.buyerRevenueAmount ?? "0",
         publisherPayoutAmount: dto.publisherPayoutAmount ?? "0",
         buyerThresholdSeconds: dto.buyerThresholdSeconds ?? 90,
         publisherThresholdSeconds: dto.publisherThresholdSeconds ?? 90,
         allowedStates: dto.allowedStates ?? [],
-        status: "DRAFT",
         dialMode: dto.dialMode ?? "WATERFALL",
         recordingEnabled: dto.recordingEnabled ?? false,
         recordingDisclosure: dto.recordingDisclosure,
         dailyCap: dto.dailyCap,
+        status: dto.status ?? "DRAFT",
       },
     });
     if (dto.buyerIds) {
       for (const [i, buyerId] of dto.buyerIds.entries()) {
+        const buyer = await this.prisma.buyer.findFirstOrThrow({
+          where: { ...buyerScope(user), OR: [{ id: buyerId }, { publicId: buyerId }] },
+        });
         await this.prisma.campaignBuyer.create({
-          data: { campaignId: cam.id, buyerId, priority: i + 1 },
+          data: { campaignId: cam.id, buyerId: buyer.id, priority: i + 1 },
         });
       }
     }
@@ -168,5 +184,29 @@ export class CampaignsController {
       },
     });
     return after;
+  }
+
+  @Delete(":id")
+  async remove(@CurrentUser() user: AuthPrincipal, @Param("id") id: string) {
+    assertPerm(user, Permission.CAMPAIGNS_WRITE);
+    const row = await this.prisma.campaign.findFirstOrThrow({
+      where: { ...campaignScope(user), OR: [{ id }, { publicId: id }] },
+    });
+    const calls = await this.prisma.call.count({ where: { campaignId: row.id } });
+    if (calls === 0) {
+      await this.prisma.campaignBuyer.deleteMany({ where: { campaignId: row.id } });
+      await this.prisma.pricingRule.deleteMany({ where: { campaignId: row.id } });
+      await this.prisma.schedule.deleteMany({ where: { campaignId: row.id } });
+      await this.prisma.capPolicy.deleteMany({ where: { campaignId: row.id } });
+      await this.prisma.trackingNumber.updateMany({
+        where: { campaignId: row.id },
+        data: { campaignId: null, status: "RESERVED" },
+      });
+      await this.prisma.lead.updateMany({ where: { campaignId: row.id }, data: { campaignId: null } });
+      await this.prisma.campaign.delete({ where: { id: row.id } });
+      return { ok: true, mode: "deleted" as const };
+    }
+    await this.prisma.campaign.update({ where: { id: row.id }, data: { status: "ARCHIVED" } });
+    return { ok: true, mode: "archived" as const, retainedCalls: calls };
   }
 }

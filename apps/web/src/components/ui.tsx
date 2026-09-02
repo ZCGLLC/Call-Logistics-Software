@@ -32,6 +32,9 @@ export function Panel({ title, children, action }: { title: string; children: Re
   );
 }
 
+export const fieldClass =
+  "mt-1 w-full rounded-md border border-ink-600 bg-ink-900 px-3 py-2 text-sm text-white outline-none focus:border-signal";
+
 export function Table({ headers, children }: { headers: string[]; children: React.ReactNode }) {
   return (
     <div className="overflow-x-auto">

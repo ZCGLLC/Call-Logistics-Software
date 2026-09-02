@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 import { Panel } from "@/components/ui";
 import { usd } from "@/lib/api";
+import { NumberDesk } from "@/components/number-desk";
 
 const api = process.env.API_PUBLIC_URL ?? "http://localhost:4000";
 
@@ -35,6 +36,30 @@ export default async function PublisherDetail({ params }: { params: Promise<{ id
           ))}
         </ul>
       </Panel>
+      <NumberDesk
+        lockedPublisherId={p.publicId}
+        publishers={[{ publicId: p.publicId, company: p.company }]}
+        campaigns={p.campaigns.map((c: { publicId: string; name: string }) => ({
+          publicId: c.publicId,
+          name: c.name,
+          publisher: { publicId: p.publicId },
+        }))}
+        initial={(p.numbers ?? []).map(
+          (n: {
+            id: string;
+            publicId: string;
+            e164: string;
+            provider: string;
+            numberType: string;
+            status: string;
+            campaignId?: string | null;
+          }) => ({
+            ...n,
+            publisher: { company: p.company, publicId: p.publicId },
+            campaign: p.campaigns.find((c: { id: string }) => c.id === n.campaignId) ?? null,
+          }),
+        )}
+      />
     </div>
   );
 }

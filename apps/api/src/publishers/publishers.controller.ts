@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, Patch, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Inject, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { z } from "zod";
 import { createPublicId } from "@zcg/shared";
 import { PrismaService } from "../prisma.service.js";
@@ -13,10 +13,13 @@ export class PublishersController {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   @Get()
-  async list(@CurrentUser() user: AuthPrincipal) {
+  async list(@CurrentUser() user: AuthPrincipal, @Query("includeRemoved") includeRemoved?: string) {
     if (user.buyerId) return { data: [] };
     const data = await this.prisma.publisher.findMany({
-      where: publisherScope(user),
+      where: {
+        ...publisherScope(user),
+        status: includeRemoved === "true" ? undefined : { not: "TERMINATED" },
+      },
       orderBy: { company: "asc" },
       include: { _count: { select: { calls: true, campaigns: true } } },
     });
@@ -35,6 +38,7 @@ export class PublishersController {
         status: z.string().optional(),
         verticals: z.array(z.string()).optional(),
         notes: z.string().optional(),
+        paymentTerms: z.enum(["PREPAID", "NET_7", "NET_14", "NET_15", "NET_30", "CUSTOM"]).optional(),
       })
       .parse(body);
     const row = await this.prisma.publisher.create({
@@ -47,7 +51,8 @@ export class PublishersController {
         phone: dto.phone,
         verticals: dto.verticals ?? [],
         notes: dto.notes,
-        status: (dto.status as never) ?? "PROSPECT",
+        paymentTerms: dto.paymentTerms ?? "NET_15",
+        status: (dto.status as never) ?? "ACTIVE",
       },
     });
     await this.prisma.auditLog.create({
@@ -114,5 +119,53 @@ export class PublishersController {
       },
     });
     return after;
+  }
+
+  @Delete(":id")
+  async remove(@CurrentUser() user: AuthPrincipal, @Param("id") id: string) {
+    assertPerm(user, Permission.PUBLISHERS_WRITE);
+    const row = await this.prisma.publisher.findFirstOrThrow({
+      where: { ...publisherScope(user), OR: [{ id }, { publicId: id }] },
+    });
+    const [calls, campaigns] = await Promise.all([
+      this.prisma.call.count({ where: { publisherId: row.id } }),
+      this.prisma.campaign.count({ where: { publisherId: row.id } }),
+    ]);
+    if (calls === 0 && campaigns === 0) {
+      await this.prisma.trackingNumber.updateMany({
+        where: { publisherId: row.id },
+        data: { publisherId: null, campaignId: null, status: "AVAILABLE" },
+      });
+      await this.prisma.lead.updateMany({ where: { publisherId: row.id }, data: { publisherId: null } });
+      await this.prisma.statement.deleteMany({ where: { publisherId: row.id } });
+      await this.prisma.publisher.delete({ where: { id: row.id } });
+      await this.prisma.auditLog.create({
+        data: {
+          organizationId: user.organizationId,
+          userId: user.authType === "jwt" ? user.userId : null,
+          action: "publisher.delete",
+          entity: "Publisher",
+          entityId: row.id,
+          before: { company: row.company },
+        },
+      });
+      return { ok: true, mode: "deleted" as const };
+    }
+    await this.prisma.campaign.updateMany({
+      where: { publisherId: row.id, status: { in: ["ACTIVE", "TESTING", "DRAFT"] } },
+      data: { status: "PAUSED" },
+    });
+    await this.prisma.publisher.update({ where: { id: row.id }, data: { status: "TERMINATED" } });
+    await this.prisma.auditLog.create({
+      data: {
+        organizationId: user.organizationId,
+        userId: user.authType === "jwt" ? user.userId : null,
+        action: "publisher.terminate",
+        entity: "Publisher",
+        entityId: row.id,
+        after: { status: "TERMINATED" },
+      },
+    });
+    return { ok: true, mode: "terminated" as const, retainedCalls: calls, retainedCampaigns: campaigns };
   }
 }
