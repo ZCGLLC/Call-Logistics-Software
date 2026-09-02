@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, Post, Query, Res, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Inject, Param, Patch, Post, Query, Res, UseGuards } from "@nestjs/common";
 import type { Response } from "express";
 import { z } from "zod";
 import { Money, Permission, createPublicId, isBuyerRole, isPublisherRole } from "@zcg/shared";
@@ -79,6 +79,20 @@ export class BillingController {
     });
     await this.webhooks.emit(user.organizationId, "invoice.generated", { invoiceId: invoice.publicId });
     return invoice;
+  }
+
+  @Patch("invoices/:id")
+  async patchInvoice(@CurrentUser() user: AuthPrincipal, @Param("id") id: string, @Body() body: unknown) {
+    assertPerm(user, Permission.FINANCIALS_WRITE);
+    const dto = z
+      .object({
+        status: z.enum(["DRAFT", "SENT", "PARTIALLY_PAID", "PAID", "OVERDUE", "DISPUTED"]),
+      })
+      .parse(body);
+    const invoice = await this.prisma.invoice.findFirstOrThrow({
+      where: { organizationId: user.organizationId, OR: [{ id }, { publicId: id }] },
+    });
+    return this.prisma.invoice.update({ where: { id: invoice.id }, data: { status: dto.status } });
   }
 
   @Get("invoices/:id/export.csv")

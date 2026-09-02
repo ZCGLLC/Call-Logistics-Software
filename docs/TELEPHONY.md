@@ -34,10 +34,20 @@ interface TelephonyProvider {
 | Adapter | Status |
 | --- | --- |
 | `FakeTelephonyProvider` | Full MVP simulation |
-| `TwilioAdapter` | Interface + not-implemented errors until credentials |
-| `TelnyxAdapter` | Same |
-| `PlivoAdapter` | Same |
-| `GenericSipAdapter` | Documents future Asterisk/FreeSWITCH/Kamailio/OpenSIPS signaling via SIP over HTTP/AMI/ESL — not in MVP |
+| `TwilioTelephonyProvider` | Live: search/purchase/release, inbound TwiML Dial, status completion |
+| `TelnyxTelephonyProvider` | Live: search/purchase/release, TeXML inbound, call-control hangup |
+| `PlivoAdapter` | Interface stub until credentials |
+| `GenericSipAdapter` | Future Asterisk/FreeSWITCH/Kamailio — not in this cut |
+
+Inbound webhooks (no session cookie; signature-verified):
+
+- `POST /api/v1/telephony/twilio/inbound`
+- `POST /api/v1/telephony/twilio/dial`
+- `POST /api/v1/telephony/twilio/status`
+- `POST /api/v1/telephony/telnyx/inbound`
+- `POST /api/v1/telephony/telnyx/events`
+
+See `docs/LIVE.md` for cutover steps.
 
 ## Fake provider behavior
 

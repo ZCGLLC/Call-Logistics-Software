@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, ForbiddenException, Get, Inject, Post, UseGuards } from "@nestjs/common";
 import { z } from "zod";
 import { createPublicId } from "@zcg/shared";
 import { runFakeAuction, selectWinner } from "@zcg/rtb";
@@ -16,6 +16,7 @@ export class DemoController {
 
   @Post("inbound")
   async inbound(@CurrentUser() user: AuthPrincipal, @Body() body: unknown) {
+    this.assertDemo();
     const dto = z
       .object({
         campaignId: z.string().optional(),
@@ -41,6 +42,7 @@ export class DemoController {
 
   @Post("mvp-scenarios")
   async mvp(@CurrentUser() user: AuthPrincipal) {
+    this.assertDemo();
     const s1 = await this.scenario1(user.organizationId);
     const s2a = await this.scenario2(user.organizationId, 8);
     const s2b = await this.scenario2(user.organizationId, 14);
@@ -53,6 +55,12 @@ export class DemoController {
       scenario3_waterfall: summarize(s3),
       scenario4_rtb: s4,
     };
+  }
+
+  private assertDemo() {
+    if ((process.env.APP_ENV ?? "") === "production" && process.env.FEATURE_DEMO !== "true") {
+      throw new ForbiddenException("Demo simulator is disabled in production");
+    }
   }
 
   private async scenario1(organizationId: string) {

@@ -6,6 +6,7 @@ import { Gauge } from "lucide-react";
 export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const [mfa, setMfa] = useState(false);
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -19,11 +20,18 @@ export default function LoginPage() {
       body: JSON.stringify({
         email: fd.get("email"),
         password: fd.get("password"),
+        mfaCode: fd.get("mfaCode") || undefined,
       }),
     });
     setPending(false);
     if (!res.ok) {
       setError("Invalid credentials");
+      return;
+    }
+    const body = (await res.json()) as { mfaRequired?: boolean };
+    if (body.mfaRequired) {
+      setMfa(true);
+      setError("Enter your authenticator code");
       return;
     }
     window.location.href = "/";
@@ -63,6 +71,12 @@ export default function LoginPage() {
             defaultValue="ChangeMe_Admin_123!"
           />
         </label>
+        {mfa && (
+          <label className="mb-6 block text-sm text-slate-400">
+            Authenticator code
+            <input name="mfaCode" inputMode="numeric" className="mt-1 w-full rounded-md border border-ink-600 bg-ink-900 px-3 py-2 text-white" />
+          </label>
+        )}
         {error && <p className="mb-4 text-sm text-copper">{error}</p>}
         <button
           disabled={pending}

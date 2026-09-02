@@ -26,6 +26,9 @@ export interface InboundRequest {
   connectedDurationSeconds?: number;
   destinationScripts?: Record<string, DestinationOutcome>;
   idempotencyKey?: string;
+  providerCallId?: string;
+  /** Carrier-bridged call: route only, do not simulate duration. */
+  live?: boolean;
 }
 
 @Injectable()
@@ -53,6 +56,8 @@ export class CallOrchestrator {
     const inbound = this.telephony.receiveCall({
       from: req.callerE164,
       to: number?.e164 ?? "+18005550000",
+      CallSid: req.providerCallId,
+      providerCallId: req.providerCallId,
     });
 
     const call = await this.prisma.call.create({
@@ -190,6 +195,16 @@ export class CallOrchestrator {
           traces: result.traces,
           eligible: result.eligible.map((e) => e.destination.buyerName),
           rejected: result.rejected.map((r) => ({ name: r.destination.buyerName, reasons: r.reasons })),
+          liveQueue: result.eligible.map((e) => ({
+            buyerId: e.destination.buyerId,
+            buyerName: e.destination.buyerName,
+            destinationId: e.destination.destinationId,
+            did: e.destination.did,
+            sipUri: e.destination.sipUri,
+            revenue: e.destination.revenue.toFixed(4),
+            payout: e.destination.payout.toFixed(4),
+          })),
+          liveIndex: 0,
         } as unknown as Prisma.InputJsonValue,
       },
     });
@@ -201,14 +216,19 @@ export class CallOrchestrator {
       await ev("BUYER_ELIGIBLE", { buyer: e.destination.buyerName, revenue: e.destination.revenue.toFixed(4) });
     }
 
-    const fake = this.telephony instanceof FakeTelephonyProvider ? this.telephony : null;
-    if (fake) {
-      fake.scriptedOutcomes.clear();
-      fake.defaultOutcome = { outcome: "answer", answerDelayMs: 0 };
-      if (req.destinationScripts) {
-        for (const [dest, outcome] of Object.entries(req.destinationScripts)) {
-          fake.scriptDestination(dest, { outcome, answerDelayMs: 0 });
-        }
+    if (req.live) {
+      await this.prisma.call.update({ where: { id: call.id }, data: { status: "RINGING" } });
+      this.realtime.emitOrg(req.organizationId, "CALL_STARTED", { callId: call.publicId, status: "RINGING" });
+      return this.inspector(call.id);
+    }
+
+    const simulator =
+      this.telephony instanceof FakeTelephonyProvider ? this.telephony : new FakeTelephonyProvider();
+    simulator.scriptedOutcomes.clear();
+    simulator.defaultOutcome = { outcome: "answer", answerDelayMs: 0 };
+    if (req.destinationScripts) {
+      for (const [dest, outcome] of Object.entries(req.destinationScripts)) {
+        simulator.scriptDestination(dest, { outcome, answerDelayMs: 0 });
       }
     }
 
@@ -220,6 +240,7 @@ export class CallOrchestrator {
       eligible: result.eligible,
       ev,
       organizationId: req.organizationId,
+      dialer: simulator,
     });
 
     const duration = req.connectedDurationSeconds ?? 0;
@@ -258,7 +279,7 @@ export class CallOrchestrator {
       telecom,
     });
 
-    await this.telephony.hangupCall(inbound.providerCallId);
+    await simulator.hangupCall(inbound.providerCallId);
     await ev("CALL_ENDED", { talk: duration });
 
     await this.prisma.$transaction(async (tx) => {
@@ -315,7 +336,7 @@ export class CallOrchestrator {
     }
 
     if (campaign.recordingEnabled) {
-      await this.telephony.recordCall({ providerCallId: inbound.providerCallId, callId: call.publicId });
+      await simulator.recordCall({ providerCallId: inbound.providerCallId, callId: call.publicId });
       await this.prisma.recording.create({
         data: {
           publicId: createPublicId("rec"),
@@ -357,6 +378,152 @@ export class CallOrchestrator {
     });
   }
 
+  async acceptFromCarrier(input: { from: string; to: string; providerCallId: string }) {
+    const to = normalizeE164(input.to);
+    const from = normalizeE164(input.from);
+    const number = await this.prisma.trackingNumber.findFirst({
+      where: { OR: [{ e164: to }, { e164: input.to }] },
+    });
+    if (!number) throw new Error(`Unknown tracking DID ${input.to}`);
+    return this.ingest({
+      organizationId: number.organizationId,
+      trackingE164: number.e164,
+      callerE164: from,
+      providerCallId: input.providerCallId,
+      idempotencyKey: input.providerCallId,
+      live: true,
+    });
+  }
+
+  liveTargets(call: { routingSnapshot: unknown; trackingNumber?: { e164?: string | null } | null }) {
+    const snap = (call.routingSnapshot ?? {}) as {
+      liveQueue?: Array<{
+        buyerId: string;
+        buyerName: string;
+        destinationId: string;
+        did?: string;
+        sipUri?: string;
+        revenue: string;
+        payout: string;
+      }>;
+      liveIndex?: number;
+    };
+    const queue = snap.liveQueue ?? [];
+    const index = snap.liveIndex ?? 0;
+    return { current: queue[index], rest: queue.slice(index), index, queue, callerId: call.trackingNumber?.e164 ?? "" };
+  }
+
+  async advanceLiveDial(providerCallId: string, dialStatus: string) {
+    const call = await this.prisma.call.findFirst({
+      where: { providerCallId },
+      include: { campaign: true, trackingNumber: true },
+    });
+    if (!call) return { call: null, next: undefined };
+    const answered = ["completed", "answered", "in-progress"].includes(dialStatus.toLowerCase());
+    const snap = (call.routingSnapshot ?? {}) as {
+      liveQueue?: Array<{ buyerId: string; did?: string; sipUri?: string }>;
+      liveIndex?: number;
+    };
+    const index = snap.liveIndex ?? 0;
+    const current = snap.liveQueue?.[index];
+    if (answered && current) {
+      await this.prisma.call.update({
+        where: { id: call.id },
+        data: { status: "CONNECTED", buyerId: current.buyerId, answeredAt: new Date(), transferredAt: new Date() },
+      });
+      return { call: await this.inspector(call.id), next: undefined };
+    }
+    const nextIndex = index + 1;
+    await this.prisma.call.update({
+      where: { id: call.id },
+      data: { routingSnapshot: { ...(snap as object), liveIndex: nextIndex } as Prisma.InputJsonValue },
+    });
+    const refreshed = await this.prisma.call.findFirstOrThrow({
+      where: { id: call.id },
+      include: { trackingNumber: true },
+    });
+    const targets = this.liveTargets(refreshed);
+    if (!targets.current) {
+      await this.prisma.call.update({ where: { id: call.id }, data: { status: "FAILED", endedAt: new Date() } });
+    }
+    return { call: await this.inspector(call.id), next: targets.current };
+  }
+
+  async completeLive(providerCallId: string, durationSeconds: number, recordingUrl?: string) {
+    const call = await this.prisma.call.findFirst({
+      where: { providerCallId },
+      include: { campaign: true, buyer: true },
+    });
+    if (!call) return null;
+    if (call.status === "COMPLETED" || call.status === "FAILED") return this.inspector(call.id);
+    const duration = Math.max(0, Math.round(durationSeconds));
+    const telecom = Money.from(String(call.campaign.estimatedTelecomCost));
+    const payout = Money.from(String(call.campaign.publisherPayoutAmount));
+    const buyerRevenue = call.buyer
+      ? Money.from(String(call.buyer.revenuePerCall))
+      : Money.from(String(call.campaign.buyerRevenueAmount));
+    const evaln = evaluateDurationConversion({
+      buyerConnectedSeconds: duration,
+      buyer: { amount: buyerRevenue, thresholdSeconds: call.campaign.buyerThresholdSeconds },
+      publisher: { amount: payout, thresholdSeconds: call.campaign.publisherThresholdSeconds },
+      telecom,
+    });
+    await this.prisma.call.update({
+      where: { id: call.id },
+      data: {
+        status: "COMPLETED",
+        endedAt: new Date(),
+        talkDurationSeconds: duration,
+        totalDurationSeconds: duration + 8,
+        revenue: evaln.revenue.toFixed(4),
+        payout: evaln.payout.toFixed(4),
+        telecomCost: evaln.telecom.toFixed(4),
+        profit: evaln.profit.toFixed(4),
+        margin: evaln.margin,
+        converted: evaln.converted,
+        convertedAt: evaln.converted ? new Date() : null,
+        conversionReason: evaln.reason,
+      },
+    });
+    if (evaln.converted) {
+      const exists = await this.prisma.conversion.findUnique({ where: { callId: call.id } });
+      if (!exists) {
+        await this.prisma.conversion.create({
+          data: {
+            publicId: createPublicId("conv"),
+            callId: call.id,
+            model: "DURATION",
+            revenue: evaln.revenue.toFixed(4),
+            payout: evaln.payout.toFixed(4),
+            telecom: evaln.telecom.toFixed(4),
+            profit: evaln.profit.toFixed(4),
+            reason: evaln.reason,
+          },
+        });
+      }
+    }
+    if (recordingUrl) {
+      await this.prisma.recording.create({
+        data: {
+          publicId: createPublicId("rec"),
+          callId: call.id,
+          storageProvider: process.env.STORAGE_PROVIDER ?? "carrier",
+          filePath: recordingUrl,
+          durationSeconds: duration,
+        },
+      });
+    }
+    this.realtime.emitOrg(call.organizationId, "CALL_COMPLETED", {
+      callId: call.publicId,
+      converted: evaln.converted,
+    });
+    await this.webhooks.emit(call.organizationId, "call.completed", {
+      callId: call.publicId,
+      converted: evaln.converted,
+    });
+    return this.inspector(call.id);
+  }
+
   private async dialEligible(input: {
     campaign: Awaited<ReturnType<CallOrchestrator["loadCampaign"]>>;
     call: { id: string; publicId: string };
@@ -365,6 +532,7 @@ export class CallOrchestrator {
     eligible: RankedDestination[];
     ev: (type: string, payload?: unknown) => Promise<void>;
     organizationId: string;
+    dialer: TelephonyProvider;
   }) {
     type Connected = { id: string; name: string; destinationId: string; did?: string; revenue: Money; payout: Money };
     const dialOne = async (ranked: RankedDestination) => {
@@ -373,12 +541,12 @@ export class CallOrchestrator {
       if (!target) return { ranked, attemptResult: "FAILED" as const, outboundId: null as string | null, target };
       await input.ev("BUYER_DIALED", { buyer: d.buyerName, to: target });
       const attemptStart = new Date();
-      const outbound = await this.telephony.makeCall({
+      const outbound = await input.dialer.makeCall({
         from: input.numberE164,
         to: target,
         callId: input.call.publicId,
       });
-      const status = await this.telephony.getCallStatus(outbound.providerCallId);
+      const status = await input.dialer.getCallStatus(outbound.providerCallId);
       let attemptResult: "ANSWERED" | "NO_ANSWER" | "REJECTED" | "BUSY" | "FAILED" = "FAILED";
       if (status.status === "answered") attemptResult = "ANSWERED";
       else if (status.status === "no_answer") attemptResult = "NO_ANSWER";
@@ -414,7 +582,7 @@ export class CallOrchestrator {
     const connect = async (ranked: RankedDestination, outboundId: string): Promise<Connected> => {
       const d = ranked.destination;
       await input.ev("BUYER_ANSWERED", { buyer: d.buyerName });
-      await this.telephony.bridgeCall({
+      await input.dialer.bridgeCall({
         callerProviderCallId: input.inboundProviderCallId,
         destinationProviderCallId: outboundId,
         callId: input.call.publicId,
@@ -453,7 +621,7 @@ export class CallOrchestrator {
       for (const r of results) {
         await persistAttempt(r.ranked, r.attemptResult, r.attemptStart ?? new Date());
         if (winner && r !== winner && r.outboundId) {
-          await this.telephony.hangupCall(r.outboundId);
+          await input.dialer.hangupCall(r.outboundId);
           await input.ev("BUYER_CANCELLED", { buyer: r.ranked.destination.buyerName });
         }
       }
@@ -605,4 +773,12 @@ export class CallOrchestrator {
       destinations,
     };
   }
+}
+
+export function normalizeE164(value: string): string {
+  const digits = value.replace(/\D/g, "");
+  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+  if (digits.length === 10) return `+1${digits}`;
+  if (value.startsWith("+")) return `+${digits}`;
+  return value;
 }

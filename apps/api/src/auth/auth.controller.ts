@@ -7,10 +7,12 @@ import { PrismaService } from "../prisma.service.js";
 import { AuthGuard, CurrentUser, type AuthPrincipal } from "./auth.guard.js";
 import { hasPermission, Permission } from "@zcg/shared";
 import { portalKind } from "./tenant.js";
+import { generateTotpSecret, otpauthUrl, verifyTotp } from "./totp.js";
 
 const LoginDto = z.object({
   email: z.string().email(),
   password: z.string().min(8),
+  mfaCode: z.string().optional(),
 });
 
 @Controller("auth")
@@ -22,7 +24,7 @@ export class AuthController {
 
   @Post("login")
   async login(@Body() body: unknown, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
-    const { email, password } = LoginDto.parse(body);
+    const { email, password, mfaCode } = LoginDto.parse(body);
     const user = await this.prisma.user.findUnique({
       where: { email: email.toLowerCase() },
       include: { memberships: true },
@@ -32,6 +34,12 @@ export class AuthController {
     if (!ok) throw new UnauthorizedException("Invalid credentials");
     const membership = user.memberships[0];
     if (!membership) throw new UnauthorizedException("No organization membership");
+    if (user.mfaEnabled) {
+      if (!mfaCode) return { mfaRequired: true };
+      if (!user.mfaSecret || !verifyTotp(user.mfaSecret, mfaCode)) {
+        throw new UnauthorizedException("Invalid authenticator code");
+      }
+    }
     const principal: AuthPrincipal = {
       userId: user.id,
       email: user.email,
@@ -71,6 +79,38 @@ export class AuthController {
   @UseGuards(AuthGuard)
   me(@CurrentUser() user: AuthPrincipal) {
     return { user, portal: portalKind(user.role) };
+  }
+
+  @Post("mfa/start")
+  @UseGuards(AuthGuard)
+  async mfaStart(@CurrentUser() user: AuthPrincipal) {
+    const secret = generateTotpSecret();
+    await this.prisma.user.update({ where: { id: user.userId }, data: { mfaSecret: secret, mfaEnabled: false } });
+    return { secret, otpauth: otpauthUrl(user.email, secret) };
+  }
+
+  @Post("mfa/enable")
+  @UseGuards(AuthGuard)
+  async mfaEnable(@CurrentUser() user: AuthPrincipal, @Body() body: unknown) {
+    const dto = z.object({ code: z.string().min(6) }).parse(body);
+    const row = await this.prisma.user.findUniqueOrThrow({ where: { id: user.userId } });
+    if (!row.mfaSecret || !verifyTotp(row.mfaSecret, dto.code)) {
+      throw new UnauthorizedException("Invalid authenticator code");
+    }
+    await this.prisma.user.update({ where: { id: user.userId }, data: { mfaEnabled: true } });
+    return { ok: true, mfaEnabled: true };
+  }
+
+  @Post("mfa/disable")
+  @UseGuards(AuthGuard)
+  async mfaDisable(@CurrentUser() user: AuthPrincipal, @Body() body: unknown) {
+    const dto = z.object({ code: z.string().min(6) }).parse(body);
+    const row = await this.prisma.user.findUniqueOrThrow({ where: { id: user.userId } });
+    if (!row.mfaSecret || !verifyTotp(row.mfaSecret, dto.code)) {
+      throw new UnauthorizedException("Invalid authenticator code");
+    }
+    await this.prisma.user.update({ where: { id: user.userId }, data: { mfaEnabled: false, mfaSecret: null } });
+    return { ok: true, mfaEnabled: false };
   }
 
   @Get("csrf-check")
