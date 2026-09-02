@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Inject, Post, UseGuards } from "@nestjs/common";
 import { z } from "zod";
 import { createPublicId } from "@zcg/shared";
 import { PrismaService } from "../prisma.service.js";
@@ -7,7 +7,7 @@ import { AuthGuard, CurrentUser, type AuthPrincipal } from "../auth/auth.guard.j
 @Controller("numbers")
 @UseGuards(AuthGuard)
 export class NumbersController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   @Get()
   async list(@CurrentUser() user: AuthPrincipal) {

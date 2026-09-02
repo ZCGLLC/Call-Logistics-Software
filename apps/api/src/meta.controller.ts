@@ -1,11 +1,11 @@
-import { Controller, Get, UseGuards } from "@nestjs/common";
+import { Controller, Get, Inject, UseGuards } from "@nestjs/common";
 import { PrismaService } from "./prisma.service.js";
 import { AuthGuard, CurrentUser, type AuthPrincipal } from "./auth/auth.guard.js";
 
 @Controller()
 @UseGuards(AuthGuard)
 export class MetaController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   @Get("verticals")
   async verticals(@CurrentUser() user: AuthPrincipal) {

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Inject, Post, UseGuards } from "@nestjs/common";
 import { z } from "zod";
 import { createPublicId } from "@zcg/shared";
 import { runFakeAuction, selectWinner } from "@zcg/rtb";
@@ -10,8 +10,8 @@ import { CallOrchestrator } from "../calls/call-orchestrator.service.js";
 @UseGuards(AuthGuard)
 export class DemoController {
   constructor(
-    private readonly prisma: PrismaService,
-    private readonly orchestrator: CallOrchestrator,
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(CallOrchestrator) private readonly orchestrator: CallOrchestrator,
   ) {}
 
   @Post("inbound")

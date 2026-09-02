@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Query, Res, UseGuards } from "@nestjs/common";
+import { Controller, Get, Inject, Param, Query, Res, UseGuards } from "@nestjs/common";
 import type { Response } from "express";
 import { PrismaService } from "../prisma.service.js";
 import { AuthGuard, CurrentUser, type AuthPrincipal } from "../auth/auth.guard.js";
@@ -9,8 +9,8 @@ import { maskE164 } from "@zcg/shared";
 @UseGuards(AuthGuard)
 export class CallsController {
   constructor(
-    private readonly prisma: PrismaService,
-    private readonly orchestrator: CallOrchestrator,
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(CallOrchestrator) private readonly orchestrator: CallOrchestrator,
   ) {}
 
   @Get()

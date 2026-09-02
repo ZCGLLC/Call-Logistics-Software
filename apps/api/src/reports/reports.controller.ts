@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards } from "@nestjs/common";
+import { Controller, Get, Inject, Query, UseGuards } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma.service.js";
 import { AuthGuard, CurrentUser, type AuthPrincipal } from "../auth/auth.guard.js";
@@ -7,7 +7,7 @@ import { Money, grossProfit, marginRatio, startOfUtcDay, startOfUtcMonth } from 
 @Controller("reports")
 @UseGuards(AuthGuard)
 export class ReportsController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   @Get("kpis")
   async kpis(@CurrentUser() user: AuthPrincipal, @Query("range") range = "today") {

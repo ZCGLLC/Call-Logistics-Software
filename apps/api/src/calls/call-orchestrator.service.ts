@@ -27,9 +27,9 @@ export interface InboundRequest {
 @Injectable()
 export class CallOrchestrator {
   constructor(
-    private readonly prisma: PrismaService,
+    @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(TELEPHONY) private readonly telephony: TelephonyProvider,
-    private readonly realtime: RealtimeGateway,
+    @Inject(RealtimeGateway) private readonly realtime: RealtimeGateway,
   ) {}
 
   async ingest(req: InboundRequest) {

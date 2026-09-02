@@ -1,6 +1,5 @@
 import "reflect-metadata";
 import { NestFactory } from "@nestjs/core";
-import { ValidationPipe } from "@nestjs/common";
 import cookieParser from "cookie-parser";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import { AppModule } from "./app.module.js";
@@ -14,7 +13,6 @@ async function bootstrap() {
     origin: process.env.WEB_ORIGIN ?? "http://localhost:3000",
     credentials: true,
   });
-  app.useGlobalPipes(new ValidationPipe({ whitelist: false, transform: true }));
 
   if (process.env.NODE_ENV !== "production") {
     const config = new DocumentBuilder()

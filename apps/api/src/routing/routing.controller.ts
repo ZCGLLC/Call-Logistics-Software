@@ -1,4 +1,4 @@
-import { Body, Controller, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Inject, Post, UseGuards } from "@nestjs/common";
 import { z } from "zod";
 import { Money } from "@zcg/shared";
 import { route, type DestinationSnapshot } from "@zcg/routing-engine";
@@ -9,7 +9,7 @@ import type { RoutingStrategy } from "@zcg/shared";
 @Controller("routing")
 @UseGuards(AuthGuard)
 export class RoutingController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   @Post("simulate")
   async simulate(@CurrentUser() user: AuthPrincipal, @Body() body: unknown) {
