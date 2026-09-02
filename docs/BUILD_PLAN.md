@@ -19,7 +19,14 @@ After **every** phase: tests, lint, typecheck, migrate, README, commit.
 
 ## Current execution
 
-This repository started empty (`README.md` placeholder only). The first implementation push completes **Phases 0–7 (MVP)** plus routing/billing unit tests and a runnable demo scenario harness.
+This repository started empty (`README.md` placeholder only). **Phases 0–7 (MVP) plus demo RTB scenario 4 are implemented and passing** on FakeTelephonyProvider:
+
+- Scenario 1: Lone Star $42 / 130s → converted, profit $13.96
+- Scenario 2: 8s no conversion; 14s → $14 / $10 / $3.96
+- Scenario 3: waterfall no-answer → reject → answer
+- Scenario 4: in-process RTB winner B $45
+
+Unit tests: routing, money, duration conversion, duplicates, fake telephony, RTB ranking.
 
 ## Phase exit checklist
 
