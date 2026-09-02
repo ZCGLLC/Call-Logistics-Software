@@ -31,9 +31,8 @@ jobs:
       NODE_ENV: test
     steps:
       - uses: actions/checkout@v4
+      # Version comes from package.json#packageManager (pnpm@10.33.3)
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -45,4 +44,7 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm --filter @zcg/web build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+          API_PUBLIC_URL: http://localhost:4000
       - run: pnpm --filter @zcg/api typecheck

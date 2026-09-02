@@ -2,6 +2,8 @@ import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { Shell } from "@/components/shell";
 
+export const dynamic = "force-dynamic";
+
 const api = process.env.API_PUBLIC_URL ?? "http://localhost:4000";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
