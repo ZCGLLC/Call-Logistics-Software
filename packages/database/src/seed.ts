@@ -29,12 +29,26 @@ async function main() {
   await prisma.conversion.deleteMany();
   await prisma.recording.deleteMany();
   await prisma.dispute.deleteMany();
+  await prisma.webhookDelivery.deleteMany();
+  await prisma.webhookEndpoint.deleteMany();
+  await prisma.apiKey.deleteMany();
+  await prisma.notification.deleteMany();
+  await prisma.savedFilter.deleteMany();
+  await prisma.tag.deleteMany();
+  await prisma.suppressionEntry.deleteMany();
+  await prisma.ivrDefinition.deleteMany();
+  await prisma.customFieldDef.deleteMany();
+  await prisma.idempotencyRecord.deleteMany();
+  await prisma.invoiceLine.deleteMany();
+  await prisma.invoice.deleteMany();
+  await prisma.statement.deleteMany();
   await prisma.call.deleteMany();
   await prisma.campaignBuyer.deleteMany();
   await prisma.pricingRule.deleteMany();
   await prisma.schedule.deleteMany();
   await prisma.capPolicy.deleteMany();
   await prisma.trackingNumber.deleteMany();
+  await prisma.numberPool.deleteMany();
   await prisma.buyerDestination.deleteMany();
   await prisma.lead.deleteMany();
   await prisma.invoiceLine.deleteMany();
@@ -77,7 +91,11 @@ async function main() {
   const flags = ["RTB", "AI", "DIALER", "TRANSCRIPTION", "PUBLISHER_PORTAL", "BUYER_PORTAL", "PREDICTIVE_ROUTING", "DEMO"];
   for (const key of flags) {
     await prisma.featureFlag.create({
-      data: { organizationId: org.id, key, enabled: key === "DEMO" || key === "RTB" },
+      data: {
+        organizationId: org.id,
+        key,
+        enabled: key === "DEMO" || key === "RTB" || key === "PUBLISHER_PORTAL" || key === "BUYER_PORTAL",
+      },
     });
   }
 
@@ -422,12 +440,295 @@ async function main() {
     }
   }
 
+  const hill = await prisma.buyer.create({
+    data: {
+      publicId: createPublicId("buy"),
+      organizationId: org.id,
+      company: "Hill Country Intake",
+      contactName: "Intake Ops",
+      email: "ops@hillcountry.test",
+      status: "ACTIVE",
+      vertical: "medicare",
+      states: ["TX"],
+      timezone: "America/Chicago",
+      dailyCap: 200,
+      concurrentCap: 15,
+      revenuePerCall: "36.0000",
+      conversionThresholdSeconds: 90,
+    },
+  });
+  await prisma.buyerDestination.create({
+    data: {
+      publicId: createPublicId("dst"),
+      buyerId: hill.id,
+      label: "Waterfall C",
+      did: "+18005551903",
+      active: true,
+    },
+  });
+  const waterfall = campaigns.find((c) => c.name === "Medicare Waterfall");
+  if (waterfall) {
+    await prisma.campaignBuyer.create({
+      data: {
+        campaignId: waterfall.id,
+        buyerId: hill.id,
+        priority: 3,
+        revenueOverride: "36.0000",
+        allowedStates: ["TX"],
+        active: true,
+      },
+    });
+  }
+
+  const ivr = await prisma.ivrDefinition.create({
+    data: {
+      organizationId: org.id,
+      name: "Medicare disclosure",
+      version: 1,
+      status: "published",
+      document: {
+        version: 1,
+        nodes: [
+          { id: "start", type: "start", data: {} },
+          { id: "play", type: "play", data: { prompt: "This call may be recorded for quality and compliance." } },
+          { id: "route", type: "route", data: {} },
+        ],
+        edges: [
+          { id: "e1", source: "start", target: "play" },
+          { id: "e2", source: "play", target: "route" },
+        ],
+      },
+    },
+  });
+
+  const simCam = await prisma.campaign.create({
+    data: {
+      publicId: createPublicId("cam"),
+      organizationId: org.id,
+      name: "Medicare Simultaneous Ring",
+      verticalId: verticals.medicare!,
+      publisherId: publishers[0]!.id,
+      trafficSource: "Search",
+      status: "ACTIVE",
+      timezone: "America/Chicago",
+      routingStrategy: "HIGHEST_REVENUE",
+      dialMode: "SIMULTANEOUS",
+      conversionModel: "DURATION",
+      buyerThresholdSeconds: 90,
+      publisherThresholdSeconds: 90,
+      buyerRevenueAmount: "42.0000",
+      publisherPayoutAmount: "28.0000",
+      estimatedTelecomCost: "0.0400",
+      allowedStates: ["TX"],
+      recordingEnabled: true,
+      recordingDisclosure: "This call may be recorded for quality and compliance.",
+      ivrDefinitionId: ivr.id,
+    },
+  });
+  await prisma.campaignBuyer.createMany({
+    data: [
+      { campaignId: simCam.id, buyerId: buyers[0]!.id, priority: 1, revenueOverride: "42.0000", allowedStates: ["TX"], active: true },
+      { campaignId: simCam.id, buyerId: buyers[1]!.id, priority: 2, revenueOverride: "35.0000", allowedStates: ["TX"], active: true },
+    ],
+  });
+  await prisma.trackingNumber.create({
+    data: {
+      publicId: createPublicId("did"),
+      organizationId: org.id,
+      e164: "+18005552006",
+      provider: "fake",
+      campaignId: simCam.id,
+      publisherId: publishers[0]!.id,
+      status: "ASSIGNED",
+      numberType: "TOLL_FREE",
+      monthlyCost: "1.0000",
+    },
+  });
+  await prisma.schedule.create({
+    data: {
+      campaignId: simCam.id,
+      timezone: "America/Chicago",
+      days: [1, 2, 3, 4, 5],
+      openMinutes: 8 * 60,
+      closeMinutes: 20 * 60,
+      holidays: [],
+      blackoutDates: [],
+    },
+  });
+
+  const pubUser = await prisma.user.create({
+    data: {
+      publicId: createPublicId("usr"),
+      email: "publisher@zcg.local",
+      passwordHash: await argon2.hash(password),
+      name: "Summit Publisher Admin",
+      emailVerifiedAt: new Date(),
+    },
+  });
+  await prisma.membership.create({
+    data: {
+      userId: pubUser.id,
+      organizationId: org.id,
+      role: "PUBLISHER_ADMIN",
+      publisherId: publishers[0]!.id,
+    },
+  });
+
+  const buyUser = await prisma.user.create({
+    data: {
+      publicId: createPublicId("usr"),
+      email: "buyer@zcg.local",
+      passwordHash: await argon2.hash(password),
+      name: "Lone Star Buyer Admin",
+      emailVerifiedAt: new Date(),
+    },
+  });
+  await prisma.membership.create({
+    data: {
+      userId: buyUser.id,
+      organizationId: org.id,
+      role: "BUYER_ADMIN",
+      buyerId: buyers[0]!.id,
+    },
+  });
+
+  await prisma.tag.createMany({
+    data: [
+      { organizationId: org.id, name: "VIP", color: "#3DDC97" },
+      { organizationId: org.id, name: "QA", color: "#7DD3FC" },
+      { organizationId: org.id, name: "Dispute-watch", color: "#E8A87C" },
+    ],
+  });
+  await prisma.suppressionEntry.create({
+    data: {
+      organizationId: org.id,
+      type: "PHONE",
+      value: "+12145550999",
+      scope: "GLOBAL",
+      reason: "Publisher DNC sample",
+    },
+  });
+  await prisma.lead.create({
+    data: {
+      publicId: createPublicId("lead"),
+      organizationId: org.id,
+      publisherId: publishers[0]!.id,
+      campaignId: campaigns[0]!.id,
+      firstName: "Alex",
+      lastName: "Rivera",
+      phone: "+12145553001",
+      email: "alex.rivera@example.test",
+      state: "TX",
+      zip: "75201",
+      vertical: "medicare",
+      status: "NEW",
+      consentAt: new Date(),
+      consentSourceUrl: "https://summit.test/medicare",
+      consentTextVer: "v1",
+    },
+  });
+  await prisma.webhookEndpoint.create({
+    data: {
+      organizationId: org.id,
+      url: "https://example.test/zcg/webhooks",
+      secretHash: "whsec_demo_do_not_use_in_production",
+      events: ["call.completed", "call.converted"],
+      active: false,
+    },
+  });
+
+  const sampleConverted = await prisma.call.findFirst({
+    where: { organizationId: org.id, converted: true, buyerId: buyers[0]!.id },
+  });
+  if (sampleConverted) {
+    await prisma.dispute.create({
+      data: {
+        publicId: createPublicId("dsp"),
+        callId: sampleConverted.id,
+        reason: "Caller requested callback — duration dispute sample",
+        status: "OPEN",
+      },
+    });
+  }
+
+  const monthStart = new Date();
+  monthStart.setUTCDate(1);
+  monthStart.setUTCHours(0, 0, 0, 0);
+  const convertedForBuyer = await prisma.call.aggregate({
+    where: { organizationId: org.id, buyerId: buyers[0]!.id, converted: true, startedAt: { gte: monthStart } },
+    _sum: { revenue: true },
+    _count: { _all: true },
+  });
+  await prisma.invoice.create({
+    data: {
+      publicId: createPublicId("inv"),
+      organizationId: org.id,
+      buyerId: buyers[0]!.id,
+      periodStart: monthStart,
+      periodEnd: new Date(),
+      grossAmount: String(convertedForBuyer._sum.revenue ?? 0),
+      adjustments: "0.0000",
+      netAmount: String(convertedForBuyer._sum.revenue ?? 0),
+      status: "SENT",
+      lines: {
+        create: [
+          {
+            label: `Converted calls (${convertedForBuyer._count._all})`,
+            quantity: convertedForBuyer._count._all,
+            amount: String(convertedForBuyer._sum.revenue ?? 0),
+          },
+        ],
+      },
+    },
+  });
+  const convertedForPub = await prisma.call.aggregate({
+    where: { organizationId: org.id, publisherId: publishers[0]!.id, converted: true, startedAt: { gte: monthStart } },
+    _sum: { payout: true },
+    _count: { _all: true },
+  });
+  const rejectedForPub = await prisma.call.count({
+    where: { organizationId: org.id, publisherId: publishers[0]!.id, converted: false, startedAt: { gte: monthStart } },
+  });
+  await prisma.statement.create({
+    data: {
+      publicId: createPublicId("stmt"),
+      organizationId: org.id,
+      publisherId: publishers[0]!.id,
+      periodStart: monthStart,
+      periodEnd: new Date(),
+      acceptedCalls: convertedForPub._count._all,
+      rejectedCalls: rejectedForPub,
+      payout: String(convertedForPub._sum.payout ?? 0),
+      status: "DRAFT",
+    },
+  });
+  await prisma.notification.create({
+    data: {
+      userId: admin.id,
+      type: "capacity",
+      title: "Production ops layer is live",
+      body: "Portals, RTB ping/post, invoices, disputes, and Redis caps are available on this tenant.",
+    },
+  });
+  await prisma.customFieldDef.create({
+    data: {
+      organizationId: org.id,
+      verticalId: verticals.medicare,
+      entity: "lead",
+      key: "medicare_advantage",
+      label: "Medicare Advantage interest",
+      type: "boolean",
+    },
+  });
+
   console.log("Seed complete.");
   console.log(`  Admin: ${email}`);
+  console.log(`  Publisher portal: publisher@zcg.local`);
+  console.log(`  Buyer portal: buyer@zcg.local`);
   console.log(`  Org: ${org.name} (${org.publicId})`);
   console.log(`  Publishers: ${publishers.length}`);
-  console.log(`  Buyers: ${buyers.length}`);
-  console.log(`  Campaigns: ${campaigns.length}`);
+  console.log(`  Buyers: ${buyers.length + 1}`);
+  console.log(`  Campaigns: ${campaigns.length + 1}`);
   console.log("  Sample calls: 100");
 }
 

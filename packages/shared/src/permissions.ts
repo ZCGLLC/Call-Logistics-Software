@@ -22,6 +22,11 @@ export const Permission = {
   AUDIT_READ: "audit:read",
   MARGIN_READ: "margin:read",
   BUYER_IDENTITY_READ: "buyer-identity:read",
+  API_KEYS_WRITE: "apikeys:write",
+  WEBHOOKS_WRITE: "webhooks:write",
+  LEADS_WRITE: "leads:write",
+  DISPUTES_WRITE: "disputes:write",
+  IMPORT_WRITE: "import:write",
 } as const;
 export type Permission = (typeof Permission)[keyof typeof Permission];
 
@@ -47,6 +52,11 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     Permission.REPORTS_READ,
     Permission.MARGIN_READ,
     Permission.BUYER_IDENTITY_READ,
+    Permission.API_KEYS_WRITE,
+    Permission.WEBHOOKS_WRITE,
+    Permission.LEADS_WRITE,
+    Permission.DISPUTES_WRITE,
+    Permission.IMPORT_WRITE,
   ],
   ACCOUNT_MANAGER: [
     Permission.PUBLISHERS_READ,
@@ -67,6 +77,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     Permission.REPORTS_READ,
     Permission.MARGIN_READ,
     Permission.AUDIT_READ,
+    Permission.DISPUTES_WRITE,
   ],
   COMPLIANCE: [
     Permission.PII_READ,
@@ -75,15 +86,27 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     Permission.REPORTS_READ,
     Permission.AUDIT_READ,
   ],
-  PUBLISHER_ADMIN: [Permission.CAMPAIGNS_READ, Permission.CALLS_READ, Permission.REPORTS_READ],
-  PUBLISHER_USER: [Permission.CAMPAIGNS_READ, Permission.CALLS_READ, Permission.REPORTS_READ],
+  PUBLISHER_ADMIN: [
+    Permission.CAMPAIGNS_READ,
+    Permission.CALLS_READ,
+    Permission.REPORTS_READ,
+    Permission.FINANCIALS_READ,
+    Permission.LEADS_WRITE,
+    Permission.API_KEYS_WRITE,
+    Permission.WEBHOOKS_WRITE,
+  ],
+  PUBLISHER_USER: [Permission.CAMPAIGNS_READ, Permission.CALLS_READ, Permission.REPORTS_READ, Permission.LEADS_WRITE],
   BUYER_ADMIN: [
     Permission.CAMPAIGNS_READ,
     Permission.CALLS_READ,
     Permission.RECORDINGS_LISTEN,
     Permission.REPORTS_READ,
+    Permission.FINANCIALS_READ,
+    Permission.DISPUTES_WRITE,
+    Permission.API_KEYS_WRITE,
+    Permission.WEBHOOKS_WRITE,
   ],
-  BUYER_USER: [Permission.CAMPAIGNS_READ, Permission.CALLS_READ, Permission.REPORTS_READ],
+  BUYER_USER: [Permission.CAMPAIGNS_READ, Permission.CALLS_READ, Permission.REPORTS_READ, Permission.DISPUTES_WRITE],
   CALL_CENTER_MANAGER: [
     Permission.PII_READ,
     Permission.CALLS_READ,
@@ -117,4 +140,12 @@ export function canSeeBuyerIdentity(role: UserRole): boolean {
 
 export function canSeeMargin(role: UserRole): boolean {
   return hasPermission(role, Permission.MARGIN_READ);
+}
+
+export function isPublisherRole(role: UserRole): boolean {
+  return role === UserRole.PUBLISHER_ADMIN || role === UserRole.PUBLISHER_USER;
+}
+
+export function isBuyerRole(role: UserRole): boolean {
+  return role === UserRole.BUYER_ADMIN || role === UserRole.BUYER_USER;
 }

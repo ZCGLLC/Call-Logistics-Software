@@ -7,6 +7,7 @@ import { logger } from "./logger.js";
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { logger: ["error", "warn", "log"] });
+  app.getHttpAdapter().getInstance().set("trust proxy", 1);
   app.setGlobalPrefix("api/v1");
   app.use(cookieParser());
   app.enableCors({

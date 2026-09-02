@@ -4,3 +4,4 @@ export * from "./enums.js";
 export * from "./permissions.js";
 export * from "./pii.js";
 export * from "./time.js";
+export * from "./portal.js";

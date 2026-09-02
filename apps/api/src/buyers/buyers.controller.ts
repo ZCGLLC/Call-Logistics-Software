@@ -1,8 +1,9 @@
 import { Body, Controller, Get, Inject, Param, Patch, Post, UseGuards } from "@nestjs/common";
 import { z } from "zod";
-import { createPublicId } from "@zcg/shared";
+import { createPublicId, Permission } from "@zcg/shared";
 import { PrismaService } from "../prisma.service.js";
-import { AuthGuard, CurrentUser, type AuthPrincipal } from "../auth/auth.guard.js";
+import { AuthGuard, CurrentUser, assertPerm, type AuthPrincipal } from "../auth/auth.guard.js";
+import { buyerScope, redactList, redactRecord } from "../auth/tenant.js";
 
 @Controller("buyers")
 @UseGuards(AuthGuard)
@@ -11,16 +12,18 @@ export class BuyersController {
 
   @Get()
   async list(@CurrentUser() user: AuthPrincipal) {
+    if (user.publisherId) return { data: [] };
     const data = await this.prisma.buyer.findMany({
-      where: { organizationId: user.organizationId },
+      where: buyerScope(user),
       orderBy: { company: "asc" },
       include: { destinations: true, _count: { select: { calls: true } } },
     });
-    return { data };
+    return { data: redactList(user, data as unknown as Record<string, unknown>[]) };
   }
 
   @Post()
   async create(@CurrentUser() user: AuthPrincipal, @Body() body: unknown) {
+    assertPerm(user, Permission.BUYERS_WRITE);
     const dto = z
       .object({
         company: z.string().min(1),
@@ -71,7 +74,7 @@ export class BuyersController {
   @Get(":id")
   async one(@CurrentUser() user: AuthPrincipal, @Param("id") id: string) {
     const buyer = await this.prisma.buyer.findFirst({
-      where: { organizationId: user.organizationId, OR: [{ id }, { publicId: id }] },
+      where: { ...buyerScope(user), OR: [{ id }, { publicId: id }] },
       include: { destinations: true, campaignLinks: { include: { campaign: true } } },
     });
     if (!buyer) return { error: "not_found" };
@@ -86,20 +89,23 @@ export class BuyersController {
     const conversions = await this.prisma.call.count({
       where: { buyerId: buyer.id, startedAt: { gte: month }, converted: true },
     });
-    return { buyer, kpis: { ...stats, conversions } };
+    return redactRecord(user, { buyer, kpis: { ...stats, conversions } } as unknown as Record<string, unknown>);
   }
 
   @Patch(":id")
   async patch(@CurrentUser() user: AuthPrincipal, @Param("id") id: string, @Body() body: unknown) {
+    assertPerm(user, Permission.BUYERS_WRITE);
     const dto = z
       .object({
         status: z.enum(["PROSPECT", "TESTING", "ACTIVE", "PAUSED", "SUSPENDED", "TERMINATED"]).optional(),
         dailyCap: z.number().nullable().optional(),
         notes: z.string().optional(),
+        pingEndpoint: z.string().url().nullable().optional(),
+        timeoutMs: z.number().optional(),
       })
       .parse(body);
     const before = await this.prisma.buyer.findFirstOrThrow({
-      where: { organizationId: user.organizationId, OR: [{ id }, { publicId: id }] },
+      where: { ...buyerScope(user), OR: [{ id }, { publicId: id }] },
     });
     const after = await this.prisma.buyer.update({ where: { id: before.id }, data: dto });
     await this.prisma.auditLog.create({

@@ -1,8 +1,9 @@
 import { Body, Controller, Get, Inject, Post, UseGuards } from "@nestjs/common";
 import { z } from "zod";
-import { createPublicId } from "@zcg/shared";
+import { createPublicId, Permission } from "@zcg/shared";
 import { PrismaService } from "../prisma.service.js";
-import { AuthGuard, CurrentUser, type AuthPrincipal } from "../auth/auth.guard.js";
+import { AuthGuard, CurrentUser, assertPerm, type AuthPrincipal } from "../auth/auth.guard.js";
+import { numberScope } from "../auth/tenant.js";
 
 @Controller("numbers")
 @UseGuards(AuthGuard)
@@ -12,7 +13,7 @@ export class NumbersController {
   @Get()
   async list(@CurrentUser() user: AuthPrincipal) {
     const data = await this.prisma.trackingNumber.findMany({
-      where: { organizationId: user.organizationId },
+      where: numberScope(user),
       orderBy: { createdAt: "desc" },
       include: { campaign: true, publisher: true },
     });
@@ -21,6 +22,7 @@ export class NumbersController {
 
   @Post()
   async create(@CurrentUser() user: AuthPrincipal, @Body() body: unknown) {
+    assertPerm(user, Permission.CAMPAIGNS_WRITE);
     const dto = z
       .object({
         e164: z.string(),

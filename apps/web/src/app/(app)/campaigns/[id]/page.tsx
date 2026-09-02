@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 import { Panel } from "@/components/ui";
 import { usd } from "@/lib/api";
+import { CampaignEditor } from "@/components/campaign-editor";
 
 const api = process.env.API_PUBLIC_URL ?? "http://localhost:4000";
 
@@ -21,9 +22,18 @@ export default async function CampaignDetail({ params }: { params: Promise<{ id:
       <p className="text-sm text-slate-400">
         {c.vertical?.name} · {c.publisher?.company} · {c.routingStrategy}
       </p>
+      <Panel title="Routing & consent">
+        <CampaignEditor
+          id={c.publicId}
+          status={c.status}
+          dialMode={c.dialMode}
+          recordingEnabled={Boolean(c.recordingEnabled)}
+          recordingDisclosure={c.recordingDisclosure}
+        />
+      </Panel>
       <Panel title="Buyers">
         <ul className="space-y-2 text-sm">
-          {c.buyers.map((l: { buyer: { company: string }; revenueOverride?: string; priority: number }) => (
+          {c.buyers?.map((l: { buyer: { company: string }; revenueOverride?: string; priority: number }) => (
             <li key={l.buyer.company}>
               P{l.priority} {l.buyer.company} · {usd(String(l.revenueOverride ?? c.buyerRevenueAmount))}
             </li>
@@ -32,7 +42,7 @@ export default async function CampaignDetail({ params }: { params: Promise<{ id:
       </Panel>
       <Panel title="Tracking numbers">
         <ul className="font-mono text-xs">
-          {c.numbers.map((n: { e164: string; publicId: string }) => (
+          {c.numbers?.map((n: { e164: string; publicId: string }) => (
             <li key={n.publicId}>{n.e164}</li>
           ))}
         </ul>

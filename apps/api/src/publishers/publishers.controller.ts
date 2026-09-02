@@ -3,6 +3,9 @@ import { z } from "zod";
 import { createPublicId } from "@zcg/shared";
 import { PrismaService } from "../prisma.service.js";
 import { AuthGuard, CurrentUser, type AuthPrincipal } from "../auth/auth.guard.js";
+import { publisherScope, redactList, redactRecord } from "../auth/tenant.js";
+import { Permission } from "@zcg/shared";
+import { assertPerm } from "../auth/auth.guard.js";
 
 @Controller("publishers")
 @UseGuards(AuthGuard)
@@ -11,16 +14,18 @@ export class PublishersController {
 
   @Get()
   async list(@CurrentUser() user: AuthPrincipal) {
+    if (user.buyerId) return { data: [] };
     const data = await this.prisma.publisher.findMany({
-      where: { organizationId: user.organizationId },
+      where: publisherScope(user),
       orderBy: { company: "asc" },
       include: { _count: { select: { calls: true, campaigns: true } } },
     });
-    return { data };
+    return { data: redactList(user, data as unknown as Record<string, unknown>[]) };
   }
 
   @Post()
   async create(@CurrentUser() user: AuthPrincipal, @Body() body: unknown) {
+    assertPerm(user, Permission.PUBLISHERS_WRITE);
     const dto = z
       .object({
         company: z.string().min(1),
@@ -61,7 +66,7 @@ export class PublishersController {
   @Get(":id")
   async one(@CurrentUser() user: AuthPrincipal, @Param("id") id: string) {
     const publisher = await this.prisma.publisher.findFirst({
-      where: { organizationId: user.organizationId, OR: [{ id }, { publicId: id }] },
+      where: { ...publisherScope(user), OR: [{ id }, { publicId: id }] },
       include: { campaigns: true, numbers: true },
     });
     if (!publisher) return { error: "not_found" };
@@ -80,11 +85,12 @@ export class PublishersController {
     const conversions = await this.prisma.call.count({
       where: { publisherId: publisher.id, startedAt: { gte: month }, converted: true },
     });
-    return { publisher, kpis: { today, mtd, conversions, totals: converted } };
+    return redactRecord(user, { publisher, kpis: { today, mtd, conversions, totals: converted } } as unknown as Record<string, unknown>);
   }
 
   @Patch(":id")
   async patch(@CurrentUser() user: AuthPrincipal, @Param("id") id: string, @Body() body: unknown) {
+    assertPerm(user, Permission.PUBLISHERS_WRITE);
     const dto = z
       .object({
         status: z.enum(["PROSPECT", "TESTING", "ACTIVE", "PAUSED", "SUSPENDED", "TERMINATED"]).optional(),
@@ -93,7 +99,7 @@ export class PublishersController {
       })
       .parse(body);
     const before = await this.prisma.publisher.findFirstOrThrow({
-      where: { organizationId: user.organizationId, OR: [{ id }, { publicId: id }] },
+      where: { ...publisherScope(user), OR: [{ id }, { publicId: id }] },
     });
     const after = await this.prisma.publisher.update({ where: { id: before.id }, data: dto });
     await this.prisma.auditLog.create({

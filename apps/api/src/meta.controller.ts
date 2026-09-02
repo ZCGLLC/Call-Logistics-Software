@@ -1,6 +1,7 @@
 import { Controller, Get, Inject, UseGuards } from "@nestjs/common";
 import { PrismaService } from "./prisma.service.js";
 import { AuthGuard, CurrentUser, type AuthPrincipal } from "./auth/auth.guard.js";
+import { callScope, redactList } from "./auth/tenant.js";
 
 @Controller()
 @UseGuards(AuthGuard)
@@ -21,7 +22,7 @@ export class MetaController {
   async live(@CurrentUser() user: AuthPrincipal) {
     const data = await this.prisma.call.findMany({
       where: {
-        organizationId: user.organizationId,
+        ...callScope(user),
         OR: [
           { status: { in: ["INCOMING", "IVR", "QUALIFYING", "AUCTIONING", "ROUTING", "RINGING", "CONNECTED", "TRANSFERRED"] } },
           { startedAt: { gte: new Date(Date.now() - 5 * 60_000) } },
@@ -31,6 +32,6 @@ export class MetaController {
       take: 50,
       include: { campaign: { include: { vertical: true } }, publisher: true, buyer: true },
     });
-    return { data };
+    return { data: redactList(user, data as unknown as Record<string, unknown>[]) };
   }
 }
