@@ -144,9 +144,13 @@ export class CallOrchestrator {
     }
 
     const fake = this.telephony instanceof FakeTelephonyProvider ? this.telephony : null;
-    if (fake && req.destinationScripts) {
-      for (const [dest, outcome] of Object.entries(req.destinationScripts)) {
-        fake.scriptDestination(dest, { outcome, answerDelayMs: 0 });
+    if (fake) {
+      fake.scriptedOutcomes.clear();
+      fake.defaultOutcome = { outcome: "answer", answerDelayMs: 0 };
+      if (req.destinationScripts) {
+        for (const [dest, outcome] of Object.entries(req.destinationScripts)) {
+          fake.scriptDestination(dest, { outcome, answerDelayMs: 0 });
+        }
       }
     }
 
