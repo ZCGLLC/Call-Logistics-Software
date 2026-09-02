@@ -53,15 +53,24 @@ export class FakeTelephonyProvider implements TelephonyProvider {
   }
 
   async searchNumbers(q: NumberSearch): Promise<AvailableNumber[]> {
-    const area = q.areaCode ?? "214";
-    return [
-      {
-        e164: `+1${area}5550100`,
+    const area = (q.areaCode ?? "214").replace(/\D/g, "").slice(0, 3).padStart(3, "2");
+    const limit = Math.min(25, q.limit ?? 8);
+    const tollFree = Boolean(q.tollFree);
+    const tfNpas = ["800", "888", "877", "833", "866"];
+    const out: AvailableNumber[] = [];
+    for (let i = 0; i < limit; i++) {
+      this.seq += 1;
+      const npa = tollFree ? tfNpas[this.seq % tfNpas.length]! : area;
+      const nxx = String(200 + (this.seq % 800)).padStart(3, "0");
+      const line = String(1000 + (this.seq % 9000)).padStart(4, "0");
+      out.push({
+        e164: `+1${npa}${nxx}${line}`,
         monthlyCost: "1.0000",
-        type: q.tollFree ? "TOLL_FREE" : "LOCAL",
-        region: "TX",
-      },
-    ];
+        type: tollFree ? "TOLL_FREE" : "LOCAL",
+        region: tollFree ? "TF" : "TX",
+      });
+    }
+    return out;
   }
 
   async purchaseNumber(req: PurchaseNumberRequest): Promise<TrackingNumberProvision> {

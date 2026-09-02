@@ -13,9 +13,21 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || res.statusText);
+    throw new Error(messageFromBody(text, res.statusText));
   }
   return res.json() as Promise<T>;
+}
+
+function messageFromBody(text: string, fallback: string): string {
+  try {
+    const j = JSON.parse(text) as { message?: unknown; error?: string };
+    if (typeof j.message === "string" && j.message) return j.message;
+    if (Array.isArray(j.message)) return j.message.map(String).join("; ");
+    if (typeof j.error === "string" && j.error) return j.error;
+  } catch {
+    /* raw body */
+  }
+  return text || fallback;
 }
 
 export function usd(value: string | number | null | undefined): string {

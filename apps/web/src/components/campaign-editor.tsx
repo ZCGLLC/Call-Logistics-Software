@@ -33,6 +33,12 @@ export function CampaignEditor({
     setMsg("Saved");
   }
 
+  async function remove() {
+    if (!confirm("Remove this campaign? Campaigns with call history are archived instead of deleted.")) return;
+    await api(`/api/v1/campaigns/${id}`, { method: "DELETE" });
+    window.location.href = "/campaigns";
+  }
+
   return (
     <form onSubmit={onSubmit} className="grid gap-3 md:grid-cols-2">
       <label className="text-sm text-slate-400">
@@ -63,6 +69,9 @@ export function CampaignEditor({
         />
       </label>
       <button className="rounded-md bg-signal py-2 font-semibold text-ink-950">Save campaign</button>
+      <button type="button" className="rounded-md border border-copper px-4 py-2 text-sm text-copper" onClick={remove}>
+        Remove campaign
+      </button>
       {msg && <p className="text-sm text-signal">{msg}</p>}
     </form>
   );

@@ -1,7 +1,5 @@
 import { cookies } from "next/headers";
-import Link from "next/link";
-import { Panel, Table } from "@/components/ui";
-import { usd } from "@/lib/api";
+import { BuyerDesk, type BuyerRow } from "@/components/buyer-desk";
 
 const api = process.env.API_PUBLIC_URL ?? "http://localhost:4000";
 
@@ -12,30 +10,16 @@ export default async function BuyersPage() {
     headers: { cookie: `${process.env.COOKIE_NAME ?? "zcg_session"}=${token}` },
     cache: "no-store",
   });
-  const { data } = await res.json();
+  const { data } = (await res.json()) as { data?: BuyerRow[] };
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold">Buyers</h1>
-      <Panel title="Destinations">
-        <Table headers={["ID", "Company", "Status", "States", "Rate", "Buffer", "Daily cap", "DID"]}>
-          {(data ?? []).map((b: Record<string, unknown>) => (
-            <tr key={String(b.id)}>
-              <td className="px-3 py-2 font-mono text-xs text-ice">
-                <Link href={`/buyers/${b.publicId}`}>{String(b.publicId)}</Link>
-              </td>
-              <td className="px-3 py-2">{String(b.company)}</td>
-              <td className="px-3 py-2 text-xs uppercase">{String(b.status)}</td>
-              <td className="px-3 py-2 text-xs">{(b.states as string[])?.join(", ")}</td>
-              <td className="px-3 py-2 font-mono">{usd(String(b.revenuePerCall))}</td>
-              <td className="px-3 py-2 font-mono">{String(b.conversionThresholdSeconds)}s</td>
-              <td className="px-3 py-2 font-mono">{String(b.dailyCap ?? "—")}</td>
-              <td className="px-3 py-2 font-mono text-xs">
-                {(b.destinations as { did?: string }[])?.[0]?.did ?? "—"}
-              </td>
-            </tr>
-          ))}
-        </Table>
-      </Panel>
+      <div>
+        <h1 className="text-2xl font-semibold">Buyers</h1>
+        <p className="mt-1 text-sm text-slate-400">
+          Add call buyers and destination DIDs. Partners with call history are terminated instead of deleted.
+        </p>
+      </div>
+      <BuyerDesk initial={data ?? []} />
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, Patch, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Inject, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { z } from "zod";
 import { createPublicId, Permission } from "@zcg/shared";
 import { PrismaService } from "../prisma.service.js";
@@ -11,10 +11,13 @@ export class BuyersController {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   @Get()
-  async list(@CurrentUser() user: AuthPrincipal) {
+  async list(@CurrentUser() user: AuthPrincipal, @Query("includeRemoved") includeRemoved?: string) {
     if (user.publisherId) return { data: [] };
     const data = await this.prisma.buyer.findMany({
-      where: buyerScope(user),
+      where: {
+        ...buyerScope(user),
+        status: includeRemoved === "true" ? undefined : { not: "TERMINATED" },
+      },
       orderBy: { company: "asc" },
       include: { destinations: true, _count: { select: { calls: true } } },
     });
@@ -29,10 +32,13 @@ export class BuyersController {
         company: z.string().min(1),
         states: z.array(z.string()).optional(),
         revenuePerCall: z.string().optional(),
-        conversionThresholdSeconds: z.number().optional(),
-        dailyCap: z.number().optional(),
+        conversionThresholdSeconds: z.coerce.number().optional(),
+        dailyCap: z.coerce.number().optional(),
         did: z.string().optional(),
         vertical: z.string().optional(),
+        contactName: z.string().optional(),
+        email: z.string().email().optional(),
+        status: z.enum(["PROSPECT", "TESTING", "ACTIVE", "PAUSED", "SUSPENDED", "TERMINATED"]).optional(),
       })
       .parse(body);
     const buyer = await this.prisma.buyer.create({
@@ -40,12 +46,14 @@ export class BuyersController {
         publicId: createPublicId("buy"),
         organizationId: user.organizationId,
         company: dto.company,
+        contactName: dto.contactName,
+        email: dto.email,
         states: dto.states ?? [],
         revenuePerCall: dto.revenuePerCall ?? "0",
         conversionThresholdSeconds: dto.conversionThresholdSeconds ?? 90,
         dailyCap: dto.dailyCap,
         vertical: dto.vertical,
-        status: "TESTING",
+        status: dto.status ?? "ACTIVE",
       },
     });
     if (dto.did) {
@@ -120,5 +128,45 @@ export class BuyersController {
       },
     });
     return after;
+  }
+
+  @Delete(":id")
+  async remove(@CurrentUser() user: AuthPrincipal, @Param("id") id: string) {
+    assertPerm(user, Permission.BUYERS_WRITE);
+    const row = await this.prisma.buyer.findFirstOrThrow({
+      where: { ...buyerScope(user), OR: [{ id }, { publicId: id }] },
+    });
+    const calls = await this.prisma.call.count({ where: { buyerId: row.id } });
+    if (calls === 0) {
+      await this.prisma.campaignBuyer.deleteMany({ where: { buyerId: row.id } });
+      const dests = await this.prisma.buyerDestination.findMany({
+        where: { buyerId: row.id },
+        select: { id: true },
+      });
+      await this.prisma.routingAttempt.updateMany({
+        where: { destinationId: { in: dests.map((d) => d.id) } },
+        data: { destinationId: null },
+      });
+      await this.prisma.buyerDestination.deleteMany({ where: { buyerId: row.id } });
+      await this.prisma.bid.deleteMany({ where: { buyerId: row.id } });
+      const invoices = await this.prisma.invoice.findMany({ where: { buyerId: row.id }, select: { id: true } });
+      await this.prisma.invoiceLine.deleteMany({ where: { invoiceId: { in: invoices.map((i) => i.id) } } });
+      await this.prisma.invoice.deleteMany({ where: { buyerId: row.id } });
+      await this.prisma.buyer.delete({ where: { id: row.id } });
+      await this.prisma.auditLog.create({
+        data: {
+          organizationId: user.organizationId,
+          userId: user.authType === "jwt" ? user.userId : null,
+          action: "buyer.delete",
+          entity: "Buyer",
+          entityId: row.id,
+          before: { company: row.company },
+        },
+      });
+      return { ok: true, mode: "deleted" as const };
+    }
+    await this.prisma.campaignBuyer.updateMany({ where: { buyerId: row.id }, data: { active: false } });
+    await this.prisma.buyer.update({ where: { id: row.id }, data: { status: "TERMINATED" } });
+    return { ok: true, mode: "terminated" as const, retainedCalls: calls };
   }
 }

@@ -19,4 +19,15 @@ describe("FakeTelephonyProvider", () => {
   it("factory returns fake", () => {
     expect(createTelephonyProvider("fake").id).toBe("fake");
   });
+
+  it("searchNumbers returns unique inventory candidates", async () => {
+    const p = new FakeTelephonyProvider();
+    const a = await p.searchNumbers({ tollFree: true, limit: 5 });
+    const b = await p.searchNumbers({ areaCode: "214", limit: 5 });
+    expect(a).toHaveLength(5);
+    expect(new Set(a.map((n) => n.e164)).size).toBe(5);
+    expect(a[0]?.type).toBe("TOLL_FREE");
+    expect(b[0]?.type).toBe("LOCAL");
+    expect(b.some((n) => a.some((x) => x.e164 === n.e164))).toBe(false);
+  });
 });
