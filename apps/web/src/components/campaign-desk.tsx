@@ -47,7 +47,8 @@ export function CampaignDesk({
     e.preventDefault();
     setBusy(true);
     setError(null);
-    const fd = new FormData(e.currentTarget);
+    const form = e.currentTarget;
+    const fd = new FormData(form);
     const buyerId = String(fd.get("buyerId") || "");
     try {
       await api("/api/v1/campaigns", {
@@ -64,7 +65,7 @@ export function CampaignDesk({
           status: fd.get("status"),
         }),
       });
-      e.currentTarget.reset();
+      form.reset();
       await reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create campaign");

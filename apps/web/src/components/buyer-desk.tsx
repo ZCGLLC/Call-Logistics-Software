@@ -34,7 +34,8 @@ export function BuyerDesk({ initial }: { initial: BuyerRow[] }) {
     e.preventDefault();
     setBusy(true);
     setError(null);
-    const fd = new FormData(e.currentTarget);
+    const form = e.currentTarget;
+    const fd = new FormData(form);
     const states = String(fd.get("states") ?? "")
       .split(/[,\s]+/)
       .map((s) => s.trim().toUpperCase())
@@ -55,7 +56,7 @@ export function BuyerDesk({ initial }: { initial: BuyerRow[] }) {
           status: fd.get("status"),
         }),
       });
-      e.currentTarget.reset();
+      form.reset();
       await reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create buyer");

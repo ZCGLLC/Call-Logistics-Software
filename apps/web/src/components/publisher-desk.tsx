@@ -36,7 +36,8 @@ export function PublisherDesk({ initial }: { initial: PublisherRow[] }) {
     e.preventDefault();
     setBusy(true);
     setError(null);
-    const fd = new FormData(e.currentTarget);
+    const form = e.currentTarget;
+    const fd = new FormData(form);
     const verticals = VERTICALS.filter((v) => fd.get(`v_${v}`) === "on");
     try {
       await api("/api/v1/publishers", {
@@ -51,7 +52,7 @@ export function PublisherDesk({ initial }: { initial: PublisherRow[] }) {
           verticals,
         }),
       });
-      e.currentTarget.reset();
+      form.reset();
       await reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create publisher");
