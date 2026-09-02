@@ -20,7 +20,7 @@ export class AuthController {
   ) {}
 
   @Post("login")
-  async login(@Body() body: unknown, @Res({ passthrough: true }) res: Response) {
+  async login(@Body() body: unknown, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
     const { email, password } = LoginDto.parse(body);
     const user = await this.prisma.user.findUnique({
       where: { email: email.toLowerCase() },
@@ -41,10 +41,15 @@ export class AuthController {
     };
     const token = await this.jwt.signAsync(principal);
     const cookieName = process.env.COOKIE_NAME ?? "zcg_session";
+    const forwarded = String(req.headers["x-forwarded-proto"] ?? "");
+    const secure =
+      process.env.COOKIE_SECURE === "true" ||
+      process.env.NODE_ENV === "production" ||
+      forwarded.includes("https");
     res.cookie(cookieName, token, {
       httpOnly: true,
       sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
+      secure,
       maxAge: 8 * 60 * 60 * 1000,
       path: "/",
     });

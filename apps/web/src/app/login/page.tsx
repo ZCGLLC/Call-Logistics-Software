@@ -60,7 +60,7 @@ export default function LoginPage() {
             name="password"
             type="password"
             required
-            className="mt-1 w-full rounded-md border border-ink-600 bg-ink-900 px-3 py-2 text-white outline-none focus:border-signal"
+            defaultValue="ChangeMe_Admin_123!"
           />
         </label>
         {error && <p className="mb-4 text-sm text-copper">{error}</p>}
@@ -71,7 +71,8 @@ export default function LoginPage() {
           {pending ? "Signing in…" : "Continue"}
         </button>
         <p className="mt-6 text-xs text-slate-500">
-          Seeded admin uses SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD. Never store production credentials in git.
+          Demo login is pre-filled. Use <span className="font-mono text-slate-300">admin@zcg.local</span> /{" "}
+          <span className="font-mono text-slate-300">ChangeMe_Admin_123!</span> This instance is a preview, not production.
         </p>
       </form>
     </div>
