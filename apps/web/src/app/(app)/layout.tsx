@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
-import { Shell } from "@/components/shell";
+import { Shell, type ShellUser } from "@/components/shell";
 
 export const dynamic = "force-dynamic";
 
@@ -15,5 +15,6 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     cache: "no-store",
   });
   if (!me.ok) redirect("/login");
-  return <Shell>{children}</Shell>;
+  const body = (await me.json()) as { user: ShellUser };
+  return <Shell user={body.user}>{children}</Shell>;
 }

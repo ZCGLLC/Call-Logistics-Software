@@ -6,6 +6,7 @@ import { z } from "zod";
 import { PrismaService } from "../prisma.service.js";
 import { AuthGuard, CurrentUser, type AuthPrincipal } from "./auth.guard.js";
 import { hasPermission, Permission } from "@zcg/shared";
+import { portalKind } from "./tenant.js";
 
 const LoginDto = z.object({
   email: z.string().email(),
@@ -38,6 +39,10 @@ export class AuthController {
       organizationId: membership.organizationId,
       role: membership.role,
       pii: hasPermission(membership.role, Permission.PII_READ),
+      publisherId: membership.publisherId,
+      buyerId: membership.buyerId,
+      scopes: ["*"],
+      authType: "jwt",
     };
     const token = await this.jwt.signAsync(principal);
     const cookieName = process.env.COOKIE_NAME ?? "zcg_session";
@@ -65,7 +70,7 @@ export class AuthController {
   @Get("me")
   @UseGuards(AuthGuard)
   me(@CurrentUser() user: AuthPrincipal) {
-    return { user };
+    return { user, portal: portalKind(user.role) };
   }
 
   @Get("csrf-check")

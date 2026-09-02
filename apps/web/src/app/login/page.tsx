@@ -71,8 +71,10 @@ export default function LoginPage() {
           {pending ? "Signing in…" : "Continue"}
         </button>
         <p className="mt-6 text-xs text-slate-500">
-          Demo login is pre-filled. Use <span className="font-mono text-slate-300">admin@zcg.local</span> /{" "}
-          <span className="font-mono text-slate-300">ChangeMe_Admin_123!</span> This instance is a preview, not production.
+          Demo logins (same password): <span className="font-mono text-slate-300">admin@zcg.local</span> (ops),{" "}
+          <span className="font-mono text-slate-300">publisher@zcg.local</span> (publisher portal),{" "}
+          <span className="font-mono text-slate-300">buyer@zcg.local</span> (buyer portal) /{" "}
+          <span className="font-mono text-slate-300">ChangeMe_Admin_123!</span>. This instance is a preview, not production.
         </p>
       </form>
     </div>

@@ -19,10 +19,13 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export function usd(value: string | number | null | undefined): string {
-  const n = Number(value ?? 0);
+  if (value === null || value === undefined || value === "") return "—";
+  const n = Number(value);
+  if (Number.isNaN(n)) return "—";
   return n.toLocaleString("en-US", { style: "currency", currency: "USD" });
 }
 
-export function pct(value: number): string {
-  return `${(value * 100).toFixed(1)}%`;
+export function pct(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "—";
+  return `${(Number(value) * 100).toFixed(1)}%`;
 }

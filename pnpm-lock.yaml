@@ -37,6 +37,9 @@ importers:
       '@prisma/client':
         specifier: ^6.5.0
         version: 6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)
+      '@zcg/analytics':
+        specifier: workspace:*
+        version: link:../../packages/analytics
       '@zcg/billing':
         specifier: workspace:*
         version: link:../../packages/billing
@@ -46,6 +49,9 @@ importers:
       '@zcg/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@zcg/ivr':
+        specifier: workspace:*
+        version: link:../../packages/ivr
       '@zcg/routing-engine':
         specifier: workspace:*
         version: link:../../packages/routing-engine
@@ -61,6 +67,9 @@ importers:
       argon2:
         specifier: ^0.41.1
         version: 0.41.1
+      bullmq:
+        specifier: ^5.44.4
+        version: 5.81.4
       cookie-parser:
         specifier: ^1.4.7
         version: 1.4.7
@@ -168,6 +177,12 @@ importers:
 
   apps/worker:
     dependencies:
+      '@prisma/client':
+        specifier: ^6.5.0
+        version: 6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)
+      '@zcg/database':
+        specifier: workspace:*
+        version: link:../../packages/database
       bullmq:
         specifier: ^5.44.4
         version: 5.81.4
@@ -244,6 +259,9 @@ importers:
       typescript:
         specifier: ^5.8.2
         version: 5.9.3
+      vitest:
+        specifier: ^3.0.8
+        version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(tsx@4.23.13)
 
   packages/routing-engine:
     dependencies:

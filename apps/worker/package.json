@@ -11,6 +11,8 @@
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@prisma/client": "^6.5.0",
+    "@zcg/database": "workspace:*",
     "bullmq": "^5.44.4",
     "ioredis": "^5.6.0",
     "pino": "^9.6.0"

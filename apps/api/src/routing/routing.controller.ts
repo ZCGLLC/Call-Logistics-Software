@@ -130,4 +130,25 @@ export class RoutingController {
       traces: result.traces,
     };
   }
+
+  @Post("replay")
+  async replay(@CurrentUser() user: AuthPrincipal, @Body() body: unknown) {
+    const dto = z.object({ callId: z.string() }).parse(body);
+    const call = await this.prisma.call.findFirstOrThrow({
+      where: {
+        organizationId: user.organizationId,
+        ...(user.publisherId ? { publisherId: user.publisherId } : {}),
+        ...(user.buyerId ? { buyerId: user.buyerId } : {}),
+        OR: [{ id: dto.callId }, { publicId: dto.callId }],
+      },
+    });
+    const stored = call.routingSnapshot;
+    const live = await this.simulate(user, {
+      campaignId: call.campaignId,
+      state: call.callerState,
+      zip: call.callerZip,
+      callerE164: call.callerE164,
+    });
+    return { stored, live, explanation: call.routingExplanation };
+  }
 }

@@ -30,6 +30,7 @@ export const IdPrefix = {
   key: "key",
   tag: "tag",
   flag: "flag",
+  ping: "ping",
 } as const;
 
 export type IdPrefixKey = keyof typeof IdPrefix;

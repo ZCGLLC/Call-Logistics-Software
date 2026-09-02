@@ -3,11 +3,15 @@ import { Money } from "@zcg/shared";
 import { createPublicId } from "@zcg/shared";
 import { evaluateDurationConversion } from "@zcg/billing";
 import { detectDuplicate, isSuppressed } from "@zcg/compliance";
-import { route, type DestinationSnapshot, type RoutingSnapshot } from "@zcg/routing-engine";
+import { route, type DestinationSnapshot, type RankedDestination, type RoutingSnapshot } from "@zcg/routing-engine";
+import { walkIvr, type IvrDocument } from "@zcg/ivr";
 import { FakeTelephonyProvider, type DestinationOutcome, type TelephonyProvider } from "@zcg/telephony";
 import { PrismaService } from "../prisma.service.js";
 import { TELEPHONY } from "../telephony.token.js";
 import { RealtimeGateway } from "../realtime/realtime.gateway.js";
+import { CapsService } from "../caps/caps.service.js";
+import { WebhookService } from "../webhooks/webhooks.service.js";
+import { AuctionService } from "../rtb/auction.service.js";
 import { withCall } from "../logger.js";
 import type { DuplicateAction, DuplicateScope, RoutingStrategy } from "@zcg/shared";
 import { Prisma } from "@prisma/client";
@@ -30,6 +34,9 @@ export class CallOrchestrator {
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(TELEPHONY) private readonly telephony: TelephonyProvider,
     @Inject(RealtimeGateway) private readonly realtime: RealtimeGateway,
+    @Inject(CapsService) private readonly caps: CapsService,
+    @Inject(WebhookService) private readonly webhooks: WebhookService,
+    @Inject(AuctionService) private readonly auctions: AuctionService,
   ) {}
 
   async ingest(req: InboundRequest) {
@@ -77,6 +84,11 @@ export class CallOrchestrator {
     await ev("CALLER_IDENTIFIED", { e164: req.callerE164 });
     await ev("GEO_RESOLVED", { state: req.state, zip: req.zip });
     this.realtime.emitOrg(req.organizationId, "CALL_STARTED", { callId: call.publicId, status: "INCOMING" });
+    await this.webhooks.emit(req.organizationId, "call.started", { callId: call.publicId });
+
+    if (campaign.recordingEnabled && campaign.recordingDisclosure) {
+      await ev("RECORDING_DISCLOSURE", { text: campaign.recordingDisclosure });
+    }
 
     const suppressions = await this.prisma.suppressionEntry.findMany({
       where: { organizationId: req.organizationId, type: "PHONE" },
@@ -116,11 +128,57 @@ export class CallOrchestrator {
     });
     if (dup.duplicate) await ev("DUPLICATE_DETECTED", { matched: dup.matchedCallStartedAt });
 
+    if (campaign.ivrDefinitionId) {
+      const def = await this.prisma.ivrDefinition.findUnique({ where: { id: campaign.ivrDefinitionId } });
+      if (def && def.status === "published") {
+        await this.prisma.call.update({ where: { id: call.id }, data: { status: "IVR" } });
+        await ev("IVR_STARTED", { name: def.name, version: def.version });
+        const walked = walkIvr(def.document as unknown as IvrDocument, { attributes: { state: req.state, zip: req.zip } });
+        await ev("IVR_COMPLETED", { outcome: walked.outcome, path: walked.path, variables: walked.variables });
+        if (walked.outcome === "hangup" || walked.outcome === "voicemail") {
+          await ev("CALL_FAILED", { reason: `ivr_${walked.outcome}` });
+          await this.prisma.call.update({
+            where: { id: call.id },
+            data: { status: "FAILED", endedAt: new Date() },
+          });
+          await this.webhooks.emit(req.organizationId, "call.failed", { callId: call.publicId, reason: walked.outcome });
+          return this.inspector(call.id);
+        }
+      }
+    }
+
     await this.prisma.call.update({ where: { id: call.id }, data: { status: "ROUTING" } });
     await ev("ROUTING_STARTED", {});
     this.realtime.emitOrg(req.organizationId, "CALL_ROUTING", { callId: call.publicId });
 
     const snapshot = await this.buildSnapshot(campaign, call, req, dup.duplicate, suppressed);
+
+    if (campaign.routingStrategy === "HIGHEST_BID") {
+      await this.prisma.call.update({ where: { id: call.id }, data: { status: "AUCTIONING" } });
+      await ev("AUCTION_STARTED", {});
+      const auction = await this.auctions.runBuyerAuction({
+        organizationId: req.organizationId,
+        campaignId: campaign.id,
+        callId: call.id,
+        state: req.state,
+        zip: req.zip,
+      });
+      for (const d of snapshot.destinations) {
+        const bid = auction.bids.find((b) => b.buyerId === d.buyerId);
+        if (!bid?.accepted || !bid.bid) {
+          d.active = false;
+        } else {
+          d.bid = bid.bid;
+          d.revenue = bid.bid;
+          if (bid.destination) d.did = bid.destination;
+        }
+      }
+      await ev("AUCTION_COMPLETED", {
+        winner: auction.winner?.buyerName,
+        bid: auction.winner?.bid?.toFixed(4),
+      });
+    }
+
     const result = route(snapshot);
     await this.prisma.call.update({
       where: { id: call.id },
@@ -154,81 +212,22 @@ export class CallOrchestrator {
       }
     }
 
-    let connectedBuyer: { id: string; name: string; destinationId: string; did?: string; revenue: Money; payout: Money } | null =
-      null;
-
-    for (const ranked of result.eligible) {
-      const d = ranked.destination;
-      const target = d.did ?? d.sipUri;
-      if (!target) continue;
-      await ev("BUYER_DIALED", { buyer: d.buyerName, to: target });
-      const attemptStart = new Date();
-      const outbound = await this.telephony.makeCall({
-        from: number?.e164 ?? "+18005550000",
-        to: target,
-        callId: call.publicId,
-      });
-      const status = await this.telephony.getCallStatus(outbound.providerCallId);
-      let attemptResult: "ANSWERED" | "NO_ANSWER" | "REJECTED" | "BUSY" | "FAILED" = "FAILED";
-      if (status.status === "answered") attemptResult = "ANSWERED";
-      else if (status.status === "no_answer") attemptResult = "NO_ANSWER";
-      else if (status.status === "reject") attemptResult = "REJECTED";
-      else if (status.status === "busy") attemptResult = "BUSY";
-
-      await this.prisma.routingAttempt.create({
-        data: {
-          publicId: createPublicId("att"),
-          callId: call.id,
-          destinationId: d.destinationId,
-          buyerId: d.buyerId,
-          buyerName: d.buyerName,
-          result: attemptResult,
-          reason: attemptResult === "ANSWERED" ? null : status.status,
-          startedAt: attemptStart,
-          endedAt: new Date(),
-        },
-      });
-
-      if (attemptResult === "NO_ANSWER") await ev("BUYER_NO_ANSWER", { buyer: d.buyerName });
-      if (attemptResult === "REJECTED") await ev("BUYER_REJECTED_CALL", { buyer: d.buyerName });
-      if (attemptResult === "BUSY") await ev("BUYER_BUSY", { buyer: d.buyerName });
-
-      if (attemptResult === "ANSWERED") {
-        await ev("BUYER_ANSWERED", { buyer: d.buyerName });
-        await this.telephony.bridgeCall({
-          callerProviderCallId: inbound.providerCallId,
-          destinationProviderCallId: outbound.providerCallId,
-          callId: call.publicId,
-        });
-        await ev("CALL_BRIDGED", { buyer: d.buyerName });
-        await ev("BUYER_SELECTED", { buyer: d.buyerName });
-        connectedBuyer = {
-          id: d.buyerId,
-          name: d.buyerName,
-          destinationId: d.destinationId,
-          did: d.did,
-          revenue: d.revenue,
-          payout: d.payout,
-        };
-        await this.prisma.call.update({
-          where: { id: call.id },
-          data: {
-            status: "CONNECTED",
-            buyerId: d.buyerId,
-            answeredAt: new Date(),
-            transferredAt: new Date(),
-          },
-        });
-        this.realtime.emitOrg(req.organizationId, "CALL_CONNECTED", {
-          callId: call.publicId,
-          buyer: d.buyerName,
-        });
-        break;
-      }
-    }
+    const connectedBuyer = await this.dialEligible({
+      campaign,
+      call,
+      inboundProviderCallId: inbound.providerCallId,
+      numberE164: number?.e164 ?? "+18005550000",
+      eligible: result.eligible,
+      ev,
+      organizationId: req.organizationId,
+    });
 
     const duration = req.connectedDurationSeconds ?? 0;
     const telecom = Money.from(String(campaign.estimatedTelecomCost));
+
+    if (connectedBuyer) {
+      await this.caps.leaveConcurrent(req.organizationId, connectedBuyer.id);
+    }
 
     if (!connectedBuyer) {
       await ev("CALL_FAILED", { reason: "no buyer answered" });
@@ -242,6 +241,7 @@ export class CallOrchestrator {
         },
       });
       this.realtime.emitOrg(req.organizationId, "CALL_COMPLETED", { callId: call.publicId, status: "FAILED" });
+      await this.webhooks.emit(req.organizationId, "call.failed", { callId: call.publicId });
       return this.inspector(call.id);
     }
 
@@ -277,7 +277,7 @@ export class CallOrchestrator {
           converted: evaln.converted,
           convertedAt: evaln.converted ? new Date() : null,
           conversionReason: evaln.reason,
-          buyerId: connectedBuyer!.id,
+          buyerId: connectedBuyer.id,
         },
       });
       if (evaln.converted) {
@@ -306,6 +306,10 @@ export class CallOrchestrator {
         profit: evaln.profit.toFixed(4),
       });
       this.realtime.emitOrg(req.organizationId, "CONVERSION_CREATED", { callId: call.publicId });
+      await this.webhooks.emit(req.organizationId, "call.converted", {
+        callId: call.publicId,
+        revenue: evaln.revenue.toFixed(4),
+      });
     } else {
       await ev("CONVERSION_SKIPPED", { reason: evaln.reason });
     }
@@ -316,7 +320,7 @@ export class CallOrchestrator {
         data: {
           publicId: createPublicId("rec"),
           callId: call.id,
-          storageProvider: "fake",
+          storageProvider: process.env.STORAGE_PROVIDER ?? "fake",
           filePath: `s3://fake/recordings/${call.publicId}.wav`,
           durationSeconds: duration,
         },
@@ -324,6 +328,10 @@ export class CallOrchestrator {
     }
 
     this.realtime.emitOrg(req.organizationId, "CALL_COMPLETED", {
+      callId: call.publicId,
+      converted: evaln.converted,
+    });
+    await this.webhooks.emit(req.organizationId, "call.completed", {
       callId: call.publicId,
       converted: evaln.converted,
     });
@@ -347,6 +355,120 @@ export class CallOrchestrator {
         disputes: true,
       },
     });
+  }
+
+  private async dialEligible(input: {
+    campaign: Awaited<ReturnType<CallOrchestrator["loadCampaign"]>>;
+    call: { id: string; publicId: string };
+    inboundProviderCallId: string;
+    numberE164: string;
+    eligible: RankedDestination[];
+    ev: (type: string, payload?: unknown) => Promise<void>;
+    organizationId: string;
+  }) {
+    type Connected = { id: string; name: string; destinationId: string; did?: string; revenue: Money; payout: Money };
+    const dialOne = async (ranked: RankedDestination) => {
+      const d = ranked.destination;
+      const target = d.did ?? d.sipUri;
+      if (!target) return { ranked, attemptResult: "FAILED" as const, outboundId: null as string | null, target };
+      await input.ev("BUYER_DIALED", { buyer: d.buyerName, to: target });
+      const attemptStart = new Date();
+      const outbound = await this.telephony.makeCall({
+        from: input.numberE164,
+        to: target,
+        callId: input.call.publicId,
+      });
+      const status = await this.telephony.getCallStatus(outbound.providerCallId);
+      let attemptResult: "ANSWERED" | "NO_ANSWER" | "REJECTED" | "BUSY" | "FAILED" = "FAILED";
+      if (status.status === "answered") attemptResult = "ANSWERED";
+      else if (status.status === "no_answer") attemptResult = "NO_ANSWER";
+      else if (status.status === "reject") attemptResult = "REJECTED";
+      else if (status.status === "busy") attemptResult = "BUSY";
+      return { ranked, attemptResult, outboundId: outbound.providerCallId, target, attemptStart };
+    };
+
+    const persistAttempt = async (
+      ranked: RankedDestination,
+      attemptResult: "ANSWERED" | "NO_ANSWER" | "REJECTED" | "BUSY" | "FAILED",
+      attemptStart: Date,
+    ) => {
+      const d = ranked.destination;
+      await this.prisma.routingAttempt.create({
+        data: {
+          publicId: createPublicId("att"),
+          callId: input.call.id,
+          destinationId: d.destinationId,
+          buyerId: d.buyerId,
+          buyerName: d.buyerName,
+          result: attemptResult,
+          reason: attemptResult === "ANSWERED" ? null : attemptResult.toLowerCase(),
+          startedAt: attemptStart,
+          endedAt: new Date(),
+        },
+      });
+      if (attemptResult === "NO_ANSWER") await input.ev("BUYER_NO_ANSWER", { buyer: d.buyerName });
+      if (attemptResult === "REJECTED") await input.ev("BUYER_REJECTED_CALL", { buyer: d.buyerName });
+      if (attemptResult === "BUSY") await input.ev("BUYER_BUSY", { buyer: d.buyerName });
+    };
+
+    const connect = async (ranked: RankedDestination, outboundId: string): Promise<Connected> => {
+      const d = ranked.destination;
+      await input.ev("BUYER_ANSWERED", { buyer: d.buyerName });
+      await this.telephony.bridgeCall({
+        callerProviderCallId: input.inboundProviderCallId,
+        destinationProviderCallId: outboundId,
+        callId: input.call.publicId,
+      });
+      await input.ev("CALL_BRIDGED", { buyer: d.buyerName });
+      await input.ev("BUYER_SELECTED", { buyer: d.buyerName });
+      await this.caps.enterConcurrent(input.organizationId, d.buyerId);
+      await this.caps.incrementDaily(input.organizationId, d.buyerId, input.campaign.id);
+      await this.prisma.call.update({
+        where: { id: input.call.id },
+        data: {
+          status: "CONNECTED",
+          buyerId: d.buyerId,
+          answeredAt: new Date(),
+          transferredAt: new Date(),
+        },
+      });
+      this.realtime.emitOrg(input.organizationId, "CALL_CONNECTED", {
+        callId: input.call.publicId,
+        buyer: d.buyerName,
+      });
+      return {
+        id: d.buyerId,
+        name: d.buyerName,
+        destinationId: d.destinationId,
+        did: d.did,
+        revenue: d.revenue,
+        payout: d.payout,
+      };
+    };
+
+    if (input.campaign.dialMode === "SIMULTANEOUS") {
+      await input.ev("SIMULTANEOUS_RING", { count: input.eligible.length });
+      const results = await Promise.all(input.eligible.map((r) => dialOne(r)));
+      const winner = results.find((r) => r.attemptResult === "ANSWERED" && r.outboundId);
+      for (const r of results) {
+        await persistAttempt(r.ranked, r.attemptResult, r.attemptStart ?? new Date());
+        if (winner && r !== winner && r.outboundId) {
+          await this.telephony.hangupCall(r.outboundId);
+          await input.ev("BUYER_CANCELLED", { buyer: r.ranked.destination.buyerName });
+        }
+      }
+      if (winner?.outboundId) return connect(winner.ranked, winner.outboundId);
+      return null;
+    }
+
+    for (const ranked of input.eligible) {
+      const r = await dialOne(ranked);
+      await persistAttempt(ranked, r.attemptResult, r.attemptStart ?? new Date());
+      if (r.attemptResult === "ANSWERED" && r.outboundId) {
+        return connect(ranked, r.outboundId);
+      }
+    }
+    return null;
   }
 
   private async loadCampaign(req: InboundRequest) {
@@ -381,16 +503,21 @@ export class CallOrchestrator {
     isDuplicate: boolean,
     isSuppressed: boolean,
   ): Promise<RoutingSnapshot> {
-    const start = new Date();
-    start.setUTCHours(0, 0, 0, 0);
     const destinations: DestinationSnapshot[] = [];
     for (const link of campaign.buyers) {
       if (!link.active) continue;
       const buyer = link.buyer;
       const dest = buyer.destinations.find((d) => d.active) ?? buyer.destinations[0];
       if (!dest) continue;
-      const dailyUsed = await this.prisma.call.count({
-        where: { buyerId: buyer.id, startedAt: { gte: start }, status: { not: "FAILED" } },
+      const dailyUsed = await this.caps.hydrateDailyBuyer(req.organizationId, buyer.id);
+      const hourlyUsed = await this.caps.get(this.caps.hourlyBuyerKey(req.organizationId, buyer.id));
+      const concurrentUsed = await this.caps.get(this.caps.concurrentBuyerKey(req.organizationId, buyer.id));
+      const campaignDaily = await this.caps.hydrateDailyCampaign(req.organizationId, campaign.id);
+      if (campaign.dailyCap && campaignDaily >= campaign.dailyCap) {
+        continue;
+      }
+      const hours = await this.prisma.schedule.findFirst({
+        where: { OR: [{ campaignId: campaign.id }, { buyerId: buyer.id }] },
       });
       const revenue = Money.from(String(link.revenueOverride ?? buyer.revenuePerCall ?? campaign.buyerRevenueAmount));
       const payout = Money.from(String(link.payoutOverride ?? campaign.publisherPayoutAmount));
@@ -410,11 +537,20 @@ export class CallOrchestrator {
         allowedPublisherIds: [],
         allowedCampaignIds: [],
         allowedTrafficSourceIds: [],
-        hours: null,
+        hours: hours
+          ? {
+              timezone: hours.timezone,
+              days: hours.days,
+              openMinutes: hours.openMinutes,
+              closeMinutes: hours.closeMinutes,
+              holidays: hours.holidays,
+              blackoutDates: hours.blackoutDates,
+            }
+          : null,
         caps: {
-          concurrent: 0,
+          concurrent: concurrentUsed,
           concurrentLimit: buyer.concurrentCap,
-          hourly: 0,
+          hourly: hourlyUsed,
           hourlyLimit: buyer.hourlyCap,
           daily: dailyUsed,
           dailyLimit: link.dailyCap ?? buyer.dailyCap,
