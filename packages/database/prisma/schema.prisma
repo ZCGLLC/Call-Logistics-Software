@@ -1,0 +1,885 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum OrganizationKind {
+  INTERNAL
+  PUBLISHER
+  BUYER
+  CALL_CENTER
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  ADMINISTRATOR
+  OPERATIONS_MANAGER
+  ACCOUNT_MANAGER
+  FINANCE
+  COMPLIANCE
+  PUBLISHER_ADMIN
+  PUBLISHER_USER
+  BUYER_ADMIN
+  BUYER_USER
+  CALL_CENTER_MANAGER
+  AGENT
+  READ_ONLY
+}
+
+enum PublisherStatus {
+  PROSPECT
+  TESTING
+  ACTIVE
+  PAUSED
+  SUSPENDED
+  TERMINATED
+}
+
+enum BuyerStatus {
+  PROSPECT
+  TESTING
+  ACTIVE
+  PAUSED
+  SUSPENDED
+  TERMINATED
+}
+
+enum CampaignStatus {
+  DRAFT
+  TESTING
+  ACTIVE
+  PAUSED
+  COMPLETED
+  ARCHIVED
+}
+
+enum CallStatus {
+  INCOMING
+  IVR
+  QUALIFYING
+  AUCTIONING
+  ROUTING
+  RINGING
+  CONNECTED
+  TRANSFERRED
+  COMPLETED
+  FAILED
+}
+
+enum RoutingStrategy {
+  PRIORITY
+  WEIGHTED
+  ROUND_ROBIN
+  LEAST_UTILIZED
+  HIGHEST_REVENUE
+  HIGHEST_BID
+  HIGHEST_EPC
+  HIGHEST_CONVERSION
+  PREDICTIVE_SCORE
+  MAX_GROSS_PROFIT
+  EXPECTED_VALUE
+}
+
+enum DialMode {
+  WATERFALL
+  SIMULTANEOUS
+}
+
+enum ConversionModel {
+  DURATION
+  BUYER_API
+  WEBHOOK
+  DISPOSITION
+  MANUAL
+  REVENUE_EVENT
+}
+
+enum PricingModel {
+  CPL
+  CPA
+  PAY_PER_CALL
+  DURATION
+  FLAT
+  VARIABLE_BID
+  REVENUE_SHARE
+  HYBRID
+}
+
+enum NumberStatus {
+  AVAILABLE
+  ASSIGNED
+  RESERVED
+  PORTING
+  RELEASED
+}
+
+enum NumberType {
+  LOCAL
+  TOLL_FREE
+  MOBILE
+}
+
+enum DuplicateAction {
+  REJECT
+  ROUTE_ELSEWHERE
+  LOWER_PRICE
+  FLAG_ONLY
+}
+
+enum DuplicateScope {
+  CAMPAIGN
+  VERTICAL
+  BUYER
+  PUBLISHER
+  PLATFORM
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+  DISPUTED
+}
+
+enum PaymentTerms {
+  PREPAID
+  NET_7
+  NET_14
+  NET_15
+  NET_30
+  CUSTOM
+}
+
+enum RoutingAttemptResult {
+  ELIGIBLE
+  DIALED
+  NO_ANSWER
+  REJECTED
+  BUSY
+  FAILED
+  ANSWERED
+  CANCELLED
+}
+
+model Organization {
+  id        String           @id @default(cuid())
+  publicId  String           @unique
+  name      String
+  kind      OrganizationKind
+  timezone  String           @default("America/Chicago")
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  deletedAt DateTime?
+
+  memberships      Membership[]
+  teams            Team[]
+  publishers       Publisher[]
+  buyers           Buyer[]
+  verticals        Vertical[]
+  campaigns        Campaign[]
+  numbers          TrackingNumber[]
+  numberPools      NumberPool[]
+  calls            Call[]
+  leads            Lead[]
+  invoices         Invoice[]
+  statements       Statement[]
+  webhooks         WebhookEndpoint[]
+  auditLogs        AuditLog[]
+  featureFlags     FeatureFlag[]
+  apiKeys          ApiKey[]
+  savedFilters     SavedFilter[]
+  suppressions     SuppressionEntry[]
+  tags             Tag[]
+  dailyAggregates  DailyAggregate[]
+  ivrDefinitions   IvrDefinition[]
+  customFieldDefs  CustomFieldDef[]
+}
+
+model User {
+  id              String    @id @default(cuid())
+  publicId        String    @unique
+  email           String    @unique
+  passwordHash    String
+  name            String
+  emailVerifiedAt DateTime?
+  mfaSecret       String?
+  mfaEnabled      Boolean   @default(false)
+  status          String    @default("ACTIVE")
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  memberships Membership[]
+  sessions    Session[]
+  auditLogs   AuditLog[]
+  managedPublishers Publisher[] @relation("AccountManager")
+  notifications     Notification[]
+}
+
+model Membership {
+  id             String   @id @default(cuid())
+  userId         String
+  organizationId String
+  role           UserRole
+  publisherId    String?
+  buyerId        String?
+  createdAt      DateTime @default(now())
+
+  user         User         @relation(fields: [userId], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  ip        String?
+  userAgent String?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+model Team {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  createdAt      DateTime @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id])
+}
+
+model Vertical {
+  id             String   @id @default(cuid())
+  organizationId String
+  slug           String
+  name           String
+  createdAt      DateTime @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  campaigns      Campaign[]
+  customFields   CustomFieldDef[]
+  @@unique([organizationId, slug])
+}
+
+model CustomFieldDef {
+  id             String   @id @default(cuid())
+  organizationId String
+  verticalId     String?
+  entity         String
+  key            String
+  label          String
+  type           String
+  options        Json?
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  vertical       Vertical?    @relation(fields: [verticalId], references: [id])
+}
+
+model Publisher {
+  id                   String           @id @default(cuid())
+  publicId             String           @unique
+  organizationId       String
+  company              String
+  contactName          String?
+  email                String?
+  phone                String?
+  address              String?
+  status               PublisherStatus  @default(PROSPECT)
+  paymentTerms         PaymentTerms     @default(NET_15)
+  taxStatus            String?
+  bankingStatus        String?
+  defaultPayoutModel   PricingModel     @default(DURATION)
+  verticals            String[]
+  notes                String?
+  contracts            Json?
+  accountManagerId     String?
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  accountManager User?        @relation("AccountManager", fields: [accountManagerId], references: [id])
+  campaigns      Campaign[]
+  numbers        TrackingNumber[]
+  calls          Call[]
+  statements     Statement[]
+  leads          Lead[]
+
+  @@index([organizationId, status])
+}
+
+model Buyer {
+  id                   String      @id @default(cuid())
+  publicId             String      @unique
+  organizationId       String
+  company              String
+  contactName          String?
+  email                String?
+  phone                String?
+  status               BuyerStatus @default(PROSPECT)
+  vertical             String?
+  states               String[]
+  timezone             String      @default("America/Chicago")
+  dailyCap             Int?
+  hourlyCap            Int?
+  concurrentCap        Int?
+  weeklyCap            Int?
+  monthlyCap           Int?
+  minDurationSeconds   Int?
+  maxDurationSeconds   Int?
+  revenuePerCall       Decimal     @default(0) @db.Decimal(19, 4)
+  revenueModel         PricingModel @default(DURATION)
+  conversionModel      ConversionModel @default(DURATION)
+  conversionThresholdSeconds Int   @default(90)
+  pingEndpoint         String?
+  postEndpoint         String?
+  webhookEndpoint      String?
+  timeoutMs            Int         @default(1200)
+  priority             Int         @default(100)
+  weight               Int         @default(1)
+  tier                 String?
+  notes                String?
+  healthScore          Decimal?    @db.Decimal(5, 2)
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
+
+  organization Organization      @relation(fields: [organizationId], references: [id])
+  destinations BuyerDestination[]
+  campaignLinks CampaignBuyer[]
+  calls        Call[]
+  invoices     Invoice[]
+  bids         Bid[]
+
+  @@index([organizationId, status])
+}
+
+model BuyerDestination {
+  id          String  @id @default(cuid())
+  publicId    String  @unique
+  buyerId     String
+  label       String
+  did         String?
+  sipUri      String?
+  active      Boolean @default(true)
+  buyer       Buyer   @relation(fields: [buyerId], references: [id])
+  attempts    RoutingAttempt[]
+}
+
+model Campaign {
+  id                         String           @id @default(cuid())
+  publicId                   String           @unique
+  organizationId             String
+  name                       String
+  verticalId                 String
+  publisherId                String
+  trafficSource              String?
+  status                     CampaignStatus   @default(DRAFT)
+  startAt                    DateTime?
+  endAt                      DateTime?
+  timezone                   String           @default("America/Chicago")
+  routingStrategy            RoutingStrategy  @default(HIGHEST_REVENUE)
+  dialMode                   DialMode         @default(WATERFALL)
+  conversionModel            ConversionModel  @default(DURATION)
+  buyerThresholdSeconds      Int              @default(90)
+  publisherThresholdSeconds  Int              @default(90)
+  buyerRevenueAmount         Decimal          @default(0) @db.Decimal(19, 4)
+  publisherPayoutAmount      Decimal          @default(0) @db.Decimal(19, 4)
+  estimatedTelecomCost       Decimal          @default(0.0400) @db.Decimal(19, 4)
+  recordingEnabled           Boolean          @default(false)
+  recordingDisclosure        String?
+  dailyCap                   Int?
+  hourlyCap                  Int?
+  revenueCap                 Decimal?         @db.Decimal(19, 4)
+  duplicateWindowSeconds     Int              @default(86400)
+  duplicateScope             DuplicateScope   @default(CAMPAIGN)
+  duplicateAction            DuplicateAction  @default(FLAG_ONLY)
+  allowedStates              String[]
+  isTemplate                 Boolean          @default(false)
+  ivrDefinitionId            String?
+  createdAt                  DateTime         @default(now())
+  updatedAt                  DateTime         @updatedAt
+
+  organization Organization      @relation(fields: [organizationId], references: [id])
+  vertical     Vertical          @relation(fields: [verticalId], references: [id])
+  publisher    Publisher         @relation(fields: [publisherId], references: [id])
+  numbers      TrackingNumber[]
+  buyers       CampaignBuyer[]
+  calls        Call[]
+  pricingRules PricingRule[]
+  schedules    Schedule[]
+  capPolicies  CapPolicy[]
+  leads        Lead[]
+
+  @@index([organizationId, status])
+}
+
+model CampaignBuyer {
+  id                  String  @id @default(cuid())
+  campaignId          String
+  buyerId             String
+  priority            Int     @default(100)
+  weight              Int     @default(1)
+  revenueOverride     Decimal? @db.Decimal(19, 4)
+  payoutOverride      Decimal? @db.Decimal(19, 4)
+  thresholdOverride   Int?
+  allowedStates       String[]
+  dailyCap            Int?
+  active              Boolean @default(true)
+  campaign            Campaign @relation(fields: [campaignId], references: [id])
+  buyer               Buyer    @relation(fields: [buyerId], references: [id])
+  @@unique([campaignId, buyerId])
+}
+
+model PricingRule {
+  id         String   @id @default(cuid())
+  campaignId String
+  kind       String
+  match      Json
+  amount     Decimal  @db.Decimal(19, 4)
+  campaign   Campaign @relation(fields: [campaignId], references: [id])
+}
+
+model CapPolicy {
+  id         String   @id @default(cuid())
+  campaignId String?
+  buyerId    String?
+  publisherId String?
+  metric     String
+  window     String
+  limit      Int
+  campaign   Campaign? @relation(fields: [campaignId], references: [id])
+}
+
+model Schedule {
+  id            String   @id @default(cuid())
+  campaignId    String?
+  buyerId       String?
+  timezone      String
+  days          Int[]
+  openMinutes   Int
+  closeMinutes  Int
+  holidays      String[]
+  blackoutDates String[]
+  campaign      Campaign? @relation(fields: [campaignId], references: [id])
+}
+
+model NumberPool {
+  id             String   @id @default(cuid())
+  publicId       String   @unique
+  organizationId String
+  name           String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  numbers        TrackingNumber[]
+}
+
+model TrackingNumber {
+  id             String       @id @default(cuid())
+  publicId       String       @unique
+  organizationId String
+  e164           String       @unique
+  provider       String
+  providerNumberId String?
+  campaignId     String?
+  publisherId    String?
+  trafficSource  String?
+  status         NumberStatus @default(AVAILABLE)
+  numberType     NumberType   @default(LOCAL)
+  purchaseCost   Decimal      @default(0) @db.Decimal(19, 4)
+  monthlyCost    Decimal      @default(0) @db.Decimal(19, 4)
+  poolId         String?
+  createdAt      DateTime     @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  campaign     Campaign?    @relation(fields: [campaignId], references: [id])
+  publisher    Publisher?   @relation(fields: [publisherId], references: [id])
+  pool         NumberPool?  @relation(fields: [poolId], references: [id])
+  calls        Call[]
+
+  @@index([organizationId, status])
+}
+
+model Call {
+  id                     String     @id @default(cuid())
+  publicId               String     @unique
+  organizationId         String
+  providerCallId         String?
+  parentCallId           String?
+  campaignId             String
+  publisherId            String
+  trafficSource          String?
+  trackingNumberId       String?
+  buyerId                String?
+  agentId                String?
+  callerE164             String
+  callerState            String?
+  callerZip              String?
+  status                 CallStatus @default(INCOMING)
+  startedAt              DateTime   @default(now())
+  answeredAt             DateTime?
+  transferredAt          DateTime?
+  endedAt                DateTime?
+  talkDurationSeconds    Int        @default(0)
+  totalDurationSeconds   Int        @default(0)
+  revenue                Decimal    @default(0) @db.Decimal(19, 4)
+  payout                 Decimal    @default(0) @db.Decimal(19, 4)
+  telecomCost            Decimal    @default(0) @db.Decimal(19, 4)
+  otherCost              Decimal    @default(0) @db.Decimal(19, 4)
+  profit                 Decimal    @default(0) @db.Decimal(19, 4)
+  margin                 Decimal    @default(0) @db.Decimal(9, 6)
+  converted              Boolean    @default(false)
+  convertedAt            DateTime?
+  conversionReason       String?
+  disposition            String?
+  routingExplanation     String?
+  routingSnapshot        Json?
+  tags                   String[]
+  customFields           Json?
+  idempotencyKey         String?    @unique
+  createdAt              DateTime   @default(now())
+  updatedAt              DateTime   @updatedAt
+
+  organization   Organization    @relation(fields: [organizationId], references: [id])
+  campaign       Campaign        @relation(fields: [campaignId], references: [id])
+  publisher      Publisher       @relation(fields: [publisherId], references: [id])
+  buyer          Buyer?          @relation(fields: [buyerId], references: [id])
+  trackingNumber TrackingNumber? @relation(fields: [trackingNumberId], references: [id])
+  events         CallEvent[]
+  attempts       RoutingAttempt[]
+  auctions       Auction[]
+  conversions    Conversion[]
+  recordings     Recording[]
+  transcripts    Transcript[]
+  disputes       Dispute[]
+  lead           Lead?           @relation(fields: [leadId], references: [id])
+  leadId         String?
+
+  @@index([organizationId, startedAt(sort: Desc)])
+  @@index([callerE164, startedAt])
+  @@index([campaignId, startedAt])
+  @@index([publisherId, startedAt])
+  @@index([buyerId, startedAt])
+  @@index([status, startedAt])
+  @@index([converted, startedAt])
+}
+
+model CallEvent {
+  id        String   @id @default(cuid())
+  callId    String
+  seq       Int
+  type      String
+  at        DateTime @default(now())
+  payload   Json?
+  call      Call     @relation(fields: [callId], references: [id])
+  @@unique([callId, seq])
+  @@index([callId, seq])
+}
+
+model RoutingAttempt {
+  id              String                @id @default(cuid())
+  publicId        String                @unique
+  callId          String
+  destinationId   String?
+  buyerId         String?
+  buyerName       String
+  result          RoutingAttemptResult
+  reason          String?
+  startedAt       DateTime              @default(now())
+  endedAt         DateTime?
+  call            Call                  @relation(fields: [callId], references: [id])
+  destination     BuyerDestination?     @relation(fields: [destinationId], references: [id])
+  @@index([callId])
+}
+
+model Auction {
+  id          String   @id @default(cuid())
+  publicId    String   @unique
+  callId      String
+  winnerBidId String?
+  latencyMs   Int?
+  createdAt   DateTime @default(now())
+  call        Call     @relation(fields: [callId], references: [id])
+  bids        Bid[]
+}
+
+model Bid {
+  id               String   @id @default(cuid())
+  publicId         String   @unique
+  auctionId        String
+  buyerId          String
+  amount           Decimal? @db.Decimal(19, 4)
+  accepted         Boolean
+  rejectionReason  String?
+  latencyMs        Int
+  destination      String?
+  winner           Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  auction          Auction  @relation(fields: [auctionId], references: [id])
+  buyer            Buyer    @relation(fields: [buyerId], references: [id])
+}
+
+model Conversion {
+  id        String   @id @default(cuid())
+  publicId  String   @unique
+  callId    String   @unique
+  model     ConversionModel
+  revenue   Decimal  @db.Decimal(19, 4)
+  payout    Decimal  @db.Decimal(19, 4)
+  telecom   Decimal  @db.Decimal(19, 4)
+  profit    Decimal  @db.Decimal(19, 4)
+  reason    String
+  createdAt DateTime @default(now())
+  call      Call     @relation(fields: [callId], references: [id])
+}
+
+model Lead {
+  id               String   @id @default(cuid())
+  publicId         String   @unique
+  organizationId   String
+  publisherId      String?
+  campaignId       String?
+  firstName        String?
+  lastName         String?
+  phone            String
+  email            String?
+  state            String?
+  zip              String?
+  vertical         String?
+  status           String   @default("NEW")
+  customFields     Json?
+  consentAt        DateTime?
+  consentSourceUrl String?
+  consentIp        String?
+  consentUserAgent String?
+  consentTextVer   String?
+  createdAt        DateTime @default(now())
+  organization     Organization @relation(fields: [organizationId], references: [id])
+  publisher        Publisher?   @relation(fields: [publisherId], references: [id])
+  campaign         Campaign?    @relation(fields: [campaignId], references: [id])
+  calls            Call[]
+  @@index([phone, campaignId])
+}
+
+model Recording {
+  id               String   @id @default(cuid())
+  publicId         String   @unique
+  callId           String
+  startedAt        DateTime?
+  endedAt          DateTime?
+  durationSeconds  Int?
+  storageProvider  String
+  filePath         String
+  encryptionMeta   Json?
+  accessPolicy     String   @default("internal")
+  call             Call     @relation(fields: [callId], references: [id])
+}
+
+model Transcript {
+  id         String   @id @default(cuid())
+  callId     String
+  speaker    String?
+  startedMs  Int?
+  text       String
+  confidence Decimal? @db.Decimal(5, 4)
+  call       Call     @relation(fields: [callId], references: [id])
+}
+
+model Invoice {
+  id             String        @id @default(cuid())
+  publicId       String        @unique
+  organizationId String
+  buyerId        String
+  periodStart    DateTime
+  periodEnd      DateTime
+  grossAmount    Decimal       @db.Decimal(19, 4)
+  adjustments    Decimal       @default(0) @db.Decimal(19, 4)
+  netAmount      Decimal       @db.Decimal(19, 4)
+  status         InvoiceStatus @default(DRAFT)
+  createdAt      DateTime      @default(now())
+  organization   Organization  @relation(fields: [organizationId], references: [id])
+  buyer          Buyer         @relation(fields: [buyerId], references: [id])
+  lines          InvoiceLine[]
+}
+
+model InvoiceLine {
+  id        String  @id @default(cuid())
+  invoiceId String
+  label     String
+  quantity  Int
+  amount    Decimal @db.Decimal(19, 4)
+  invoice   Invoice @relation(fields: [invoiceId], references: [id])
+}
+
+model Statement {
+  id             String   @id @default(cuid())
+  publicId       String   @unique
+  organizationId String
+  publisherId    String
+  periodStart    DateTime
+  periodEnd      DateTime
+  acceptedCalls  Int
+  rejectedCalls  Int
+  payout         Decimal  @db.Decimal(19, 4)
+  adjustments    Decimal  @default(0) @db.Decimal(19, 4)
+  status         String   @default("DRAFT")
+  createdAt      DateTime @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  publisher      Publisher    @relation(fields: [publisherId], references: [id])
+}
+
+model Dispute {
+  id        String   @id @default(cuid())
+  publicId  String   @unique
+  callId    String
+  reason    String
+  notes     String?
+  status    String   @default("OPEN")
+  credit    Decimal? @db.Decimal(19, 4)
+  createdAt DateTime @default(now())
+  call      Call     @relation(fields: [callId], references: [id])
+}
+
+model WebhookEndpoint {
+  id             String   @id @default(cuid())
+  organizationId String
+  url            String
+  secretHash     String
+  events         String[]
+  active         Boolean  @default(true)
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  deliveries     WebhookDelivery[]
+}
+
+model WebhookDelivery {
+  id         String   @id @default(cuid())
+  endpointId String
+  event      String
+  payload    Json
+  attempts   Int      @default(0)
+  status     String
+  lastError  String?
+  createdAt  DateTime @default(now())
+  endpoint   WebhookEndpoint @relation(fields: [endpointId], references: [id])
+}
+
+model AuditLog {
+  id             String   @id @default(cuid())
+  organizationId String
+  userId         String?
+  action         String
+  entity         String
+  entityId       String
+  before         Json?
+  after          Json?
+  ip             String?
+  createdAt      DateTime @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  user           User?        @relation(fields: [userId], references: [id])
+  @@index([organizationId, createdAt])
+}
+
+model FeatureFlag {
+  id             String  @id @default(cuid())
+  organizationId String
+  key            String
+  enabled        Boolean @default(false)
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  @@unique([organizationId, key])
+}
+
+model ApiKey {
+  id             String    @id @default(cuid())
+  organizationId String
+  prefix         String
+  hash           String    @unique
+  name           String
+  scopes         String[]
+  lastUsedAt     DateTime?
+  revokedAt      DateTime?
+  createdAt      DateTime  @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id])
+}
+
+model SavedFilter {
+  id             String @id @default(cuid())
+  organizationId String
+  userId         String
+  name           String
+  entity         String
+  query          Json
+  organization   Organization @relation(fields: [organizationId], references: [id])
+}
+
+model Tag {
+  id             String @id @default(cuid())
+  organizationId String
+  name           String
+  color          String @default("#3DDC97")
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  @@unique([organizationId, name])
+}
+
+model SuppressionEntry {
+  id             String   @id @default(cuid())
+  organizationId String
+  type           String
+  value          String
+  scope          String   @default("GLOBAL")
+  reason         String?
+  createdAt      DateTime @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  @@index([organizationId, type, value])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  type      String
+  title     String
+  body      String
+  readAt    DateTime?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+model DailyAggregate {
+  id             String   @id @default(cuid())
+  organizationId String
+  day            DateTime @db.Date
+  publisherId    String?
+  buyerId        String?
+  campaignId     String?
+  verticalId     String?
+  calls          Int      @default(0)
+  conversions    Int      @default(0)
+  revenue        Decimal  @default(0) @db.Decimal(19, 4)
+  payout         Decimal  @default(0) @db.Decimal(19, 4)
+  telecom        Decimal  @default(0) @db.Decimal(19, 4)
+  profit         Decimal  @default(0) @db.Decimal(19, 4)
+  talkSeconds    Int      @default(0)
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  @@unique([organizationId, day, publisherId, buyerId, campaignId])
+  @@index([organizationId, day])
+}
+
+model IvrDefinition {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  version        Int
+  status         String   @default("draft")
+  document       Json
+  createdAt      DateTime @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  @@unique([organizationId, name, version])
+}
+
+model IdempotencyRecord {
+  key       String   @id
+  response  Json
+  createdAt DateTime @default(now())
+}

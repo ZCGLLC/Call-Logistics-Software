@@ -1,0 +1,27 @@
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background: #0b0f16;
+  color: #e8eef7;
+  font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+.grid-overlay {
+  background-image:
+    linear-gradient(rgba(61, 220, 151, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(61, 220, 151, 0.03) 1px, transparent 1px);
+  background-size: 32px 32px;
+}

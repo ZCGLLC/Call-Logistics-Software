@@ -1,0 +1,32 @@
+{
+  "name": "zcg-call-intelligence",
+  "private": true,
+  "version": "0.1.0",
+  "description": "ZCG Call Intelligence — proprietary pay-per-call, routing, and revenue platform",
+  "packageManager": "pnpm@10.33.3",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter @zcg/web --filter @zcg/api --filter @zcg/worker dev",
+    "build": "pnpm --filter @zcg/shared build && pnpm --filter @zcg/database build && pnpm --filter @zcg/routing-engine build && pnpm --filter @zcg/telephony build && pnpm --filter @zcg/billing build && pnpm --filter @zcg/compliance build && pnpm --filter @zcg/rtb build && pnpm --filter @zcg/analytics build && pnpm --filter @zcg/api build && pnpm --filter @zcg/worker build && pnpm --filter @zcg/web build",
+    "lint": "pnpm -r --if-present lint",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "pnpm -r --if-present test",
+    "db:generate": "pnpm --filter @zcg/database generate",
+    "db:migrate": "pnpm --filter @zcg/database migrate:dev",
+    "db:migrate:deploy": "pnpm --filter @zcg/database migrate:deploy",
+    "db:seed": "pnpm --filter @zcg/database seed",
+    "db:studio": "pnpm --filter @zcg/database studio",
+    "format": "prettier --write ."
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "argon2",
+      "@prisma/client",
+      "prisma",
+      "esbuild",
+      "msgpackr-extract"
+    ]
+  }
+}
