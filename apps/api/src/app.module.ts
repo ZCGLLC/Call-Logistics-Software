@@ -27,8 +27,9 @@ import { AuthGuard } from "./auth/auth.guard.js";
 import { CapsService } from "./caps/caps.service.js";
 import { WebhookService } from "./webhooks/webhooks.service.js";
 import { AuctionService } from "./rtb/auction.service.js";
-import { FakeTelephonyProvider } from "@zcg/telephony";
+import { createTelephonyProvider, telephonyProviderId } from "@zcg/telephony";
 import { TELEPHONY } from "./telephony.token.js";
+import { TelephonyWebhooksController } from "./telephony/telephony-webhooks.controller.js";
 
 @Module({
   imports: [
@@ -60,6 +61,7 @@ import { TELEPHONY } from "./telephony.token.js";
     BillingController,
     SearchController,
     OpsController,
+    TelephonyWebhooksController,
   ],
   providers: [
     AuthGuard,
@@ -68,7 +70,7 @@ import { TELEPHONY } from "./telephony.token.js";
     CapsService,
     WebhookService,
     AuctionService,
-    { provide: TELEPHONY, useFactory: () => new FakeTelephonyProvider() },
+    { provide: TELEPHONY, useFactory: () => createTelephonyProvider(telephonyProviderId()) },
   ],
 })
 export class AppModule {}

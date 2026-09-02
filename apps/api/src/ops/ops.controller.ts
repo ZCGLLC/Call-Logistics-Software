@@ -39,6 +39,29 @@ export class OpsController {
     };
   }
 
+  @Get("live")
+  async live(@CurrentUser() user: AuthPrincipal) {
+    const base = (process.env.PUBLIC_BASE_URL ?? "").replace(/\/$/, "");
+    const tel = process.env.TELEPHONY_PROVIDER ?? "fake";
+    return {
+      appEnv: process.env.APP_ENV ?? "local",
+      publicBaseUrl: base || null,
+      telephony: {
+        id: tel,
+        configured: tel === "fake" ? true : Boolean(process.env.TWILIO_ACCOUNT_SID || process.env.TELNYX_API_KEY),
+        fakeBlockedInProduction: tel === "fake" && process.env.ALLOW_FAKE_TELEPHONY !== "true",
+      },
+      storage: process.env.STORAGE_PROVIDER ?? "fake",
+      email: process.env.EMAIL_PROVIDER ?? "console",
+      payments: process.env.PAYMENTS_PROVIDER ?? "invoices",
+      webhooks: {
+        twilioInbound: base ? `${base}/api/v1/telephony/twilio/inbound` : null,
+        twilioStatus: base ? `${base}/api/v1/telephony/twilio/status` : null,
+        telnyxInbound: base ? `${base}/api/v1/telephony/telnyx/inbound` : null,
+      },
+    };
+  }
+
   @Get("health-scores")
   async healthScores(@CurrentUser() user: AuthPrincipal) {
     const from = startOfUtcMonth(new Date());

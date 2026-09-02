@@ -129,7 +129,7 @@ export interface TelephonyProvider {
 
 export class ProviderNotConfiguredError extends Error {
   constructor(adapter: string, method: string) {
-    super(`${adapter} adapter is a stub: ${method} requires credentials and is not available`);
+    super(`${adapter} adapter is not configured: ${method}`);
     this.name = "ProviderNotConfiguredError";
   }
 }

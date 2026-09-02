@@ -1,0 +1,103 @@
+# Production-style stack. Copy .env.example → .env, set secrets, then:
+#   docker compose -f infrastructure/docker-compose.prod.yml up --build -d
+#
+# For TLS termination, set PUBLIC_HOST to your domain and expose 80/443 via Caddy.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: zcg
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-zcg}
+      POSTGRES_DB: zcg_ci
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zcg -d zcg_ci"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ..
+      dockerfile: infrastructure/Dockerfile.api
+    env_file:
+      - ../.env
+    environment:
+      APP_ENV: production
+      NODE_ENV: production
+      DATABASE_URL: postgresql://zcg:${POSTGRES_PASSWORD:-zcg}@postgres:5432/zcg_ci?schema=public
+      REDIS_URL: redis://redis:6379
+      API_PORT: "4000"
+      WEB_ORIGIN: ${WEB_ORIGIN:-https://localhost}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
+      COOKIE_SECURE: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ..
+      dockerfile: infrastructure/Dockerfile.worker
+    env_file:
+      - ../.env
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql://zcg:${POSTGRES_PASSWORD:-zcg}@postgres:5432/zcg_ci?schema=public
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ..
+      dockerfile: infrastructure/Dockerfile.web
+    environment:
+      API_PUBLIC_URL: http://api:4000
+      COOKIE_NAME: zcg_session
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      PUBLIC_HOST: ${PUBLIC_HOST:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  caddy_data:
+  caddy_config:

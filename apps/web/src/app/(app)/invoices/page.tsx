@@ -1,6 +1,7 @@
 import { Panel, Table } from "@/components/ui";
 import { usd } from "@/lib/api";
 import { serverApi } from "@/lib/server";
+import { InvoiceActions } from "@/components/invoice-actions";
 
 export default async function InvoicesPage() {
   const { data } = await serverApi<{
@@ -29,9 +30,7 @@ export default async function InvoicesPage() {
               <td className="px-3 py-2 font-mono">{usd(inv.netAmount)}</td>
               <td className="px-3 py-2 text-xs uppercase">{inv.status}</td>
               <td className="px-3 py-2">
-                <a className="text-xs text-signal" href={`/api/v1/invoices/${inv.publicId}/export.csv`}>
-                  CSV
-                </a>
+                <InvoiceActions id={inv.publicId} status={inv.status} />
               </td>
             </tr>
           ))}

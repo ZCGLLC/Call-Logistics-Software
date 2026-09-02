@@ -69,7 +69,7 @@ Routing and billing tests are merge-critical.
 
 ## Documentation
 
-Start with `docs/PRODUCT_SPEC.md` and `docs/ARCHITECTURE.md`.
+Start with `docs/PRODUCT_SPEC.md`, `docs/ARCHITECTURE.md`, and `docs/LIVE.md` for production cutover.
 
 ## License
 
